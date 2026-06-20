@@ -1,20 +1,28 @@
 version: "3.9"
+
 services:
   backend:
     build: ./backend
     ports:
       - "8080:8080"
     volumes:
-      - backend_data:/app
+      - traderjg_data:/app/data
+    env_file:
+      - .env
     environment:
-      - PORT=8080
+      PORT: "8080"
 
   frontend:
-    build: ./frontend
+    build:
+      context: ./frontend
+      args:
+        VITE_API_URL: /api
     ports:
       - "3000:8080"
+    environment:
+      BACKEND_URL: http://backend:8080
     depends_on:
       - backend
 
 volumes:
-  backend_data:
+  traderjg_data:

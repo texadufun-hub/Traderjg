@@ -457,6 +457,64 @@ def extract_result(final_state: Any, signal: Any) -> dict:
     }
 
 
+# ── Price sanity check ────────────────────────────────────────────────────
+
+_PRICE_DEVIATION_THRESHOLD = 0.50  # flag / auto-correct if >50% off real price
+
+def _fetch_real_price(ticker: str, trade_date: str) -> float | None:
+    """Return the actual closing price for ticker on or just before trade_date."""
+    try:
+        import yfinance as yf
+        import pandas as pd
+        end = (pd.Timestamp(trade_date) + pd.Timedelta(days=4)).strftime("%Y-%m-%d")
+        hist = yf.Ticker(ticker).history(start=trade_date, end=end)
+        if not hist.empty:
+            return float(hist["Close"].iloc[0])
+    except Exception:
+        pass
+    return None
+
+
+def _sanity_check_price(result: dict, ticker: str, trade_date: str) -> dict:
+    """Auto-correct entry_reference_price if it deviates >50% from yfinance close."""
+    real = _fetch_real_price(ticker, trade_date)
+    if real is None:
+        return result
+
+    decision = result.get("final_trade_decision")
+    if not isinstance(decision, dict):
+        return result
+
+    model_price = decision.get("entry_reference_price")
+    if not model_price or real <= 0:
+        return result
+
+    deviation = abs(model_price - real) / real
+    if deviation <= _PRICE_DEVIATION_THRESHOLD:
+        return result
+
+    # Auto-correct the structured price field
+    decision["entry_reference_price"] = real
+    warning = (
+        f"[PRICE SANITY] Model stated entry ${model_price:.2f} but yfinance close is "
+        f"${real:.2f} ({deviation * 100:.0f}% deviation — likely pre-split or hallucinated price). "
+        "entry_reference_price auto-corrected to real close."
+    )
+    existing = decision.get("warning_message") or ""
+    decision["warning_message"] = (warning + " " + existing).strip()
+
+    # Also prepend a visible banner to the market report so it's obvious in the UI
+    banner = (
+        f"\n\n> ⚠️ **PRICE WARNING**: Technical report may contain hallucinated prices. "
+        f"Model stated ~${model_price:.0f}; real yfinance close is ${real:.2f}. "
+        f"Treat any price figures in this report with caution.\n\n"
+    )
+    if result.get("market_report") and isinstance(result["market_report"], str):
+        result["market_report"] = banner + result["market_report"]
+
+    return result
+
+
 # ── Thread worker ──────────────────────────────────────────────────────────
 
 def run_analysis_worker(
@@ -553,6 +611,7 @@ def run_analysis_worker(
 
         final_state, signal = ta.propagate(ticker, trade_date, on_state=_on_state)
         result = extract_result(final_state, signal)
+        result = _sanity_check_price(result, ticker, trade_date)
 
         # Persist to DB
         db = session_factory()

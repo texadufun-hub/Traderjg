@@ -7,10 +7,12 @@ services:
       - "8080:8080"
     volumes:
       - traderjg_data:/app/data
+      - ${HOME}/.config/gcloud/application_default_credentials.json:/tmp/adc.json:ro
     env_file:
       - .env
     environment:
       PORT: "8080"
+      GOOGLE_APPLICATION_CREDENTIALS: /tmp/adc.json
 
   frontend:
     build:

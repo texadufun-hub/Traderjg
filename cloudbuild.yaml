@@ -33,7 +33,7 @@ steps:
       - --memory=2Gi
       - --cpu=2
       - --timeout=3600
-      - --set-secrets=OPENAI_API_KEY=openai-api-key:latest,ANTHROPIC_API_KEY=anthropic-api-key:latest
+      - --set-secrets=GOOGLE_API_KEY=GEMINI_API_KEY:latest,FRED_API_KEY=FRED_API_KEY:latest
 
   # ── Frontend ──────────────────────────────────────────────────
   - name: "gcr.io/cloud-builders/docker"

@@ -151,9 +151,9 @@ Traderjg runs fully offline using a local [Ollama](https://ollama.com) instance 
 1. Install Ollama and pull a model with tool-calling support:
 
 ```bash
-ollama pull qwen2.5:7b      # recommended — best tool-use at 6 GB
-ollama pull qwen2.5:14b     # better quality, needs ~9 GB VRAM
-ollama pull llama3.1        # alternative
+ollama pull gemma4:e2b-it-qat   # current default — runs on 6 GB VRAM
+ollama pull qwen2.5:7b           # alternative with stronger tool-use reliability
+ollama pull qwen2.5:14b          # best quality, needs ~9 GB VRAM
 ```
 
 2. In the **Analyze** form, select **Ollama (local)** as the provider and enter your Ollama host:
@@ -169,17 +169,17 @@ http://192.168.1.x:11434   # remote machine on LAN
 
 The pipeline has two model tiers. You can use different models for each:
 
-| Tier | Agents | Recommended |
+| Tier | Agents | Current default |
 |---|---|---|
-| **Deep think** | Research Manager, Risk Judge (final decisions) | `qwen2.5:7b` or larger |
-| **Quick think** | 4 analysts + Bull/Bear + Trader + 3 risk debaters | `qwen3.5:4b` (faster) |
+| **Deep think** | Research Manager, Risk Judge (final decisions) | `gemma4:e2b-it-qat` |
+| **Quick think** | 4 analysts + Bull/Bear + Trader + 3 risk debaters | `gemma4:e2b-it-qat` |
 
 ### VRAM requirements
 
 | Model | VRAM | Notes |
 |---|---|---|
-| `qwen3.5:4b` | ~3.5 GB | Minimum viable — unreliable on complex multi-agent steps |
-| `qwen2.5:7b` | ~5 GB | Best quality that fits in 6 GB (e.g. GTX 1060) |
+| `gemma4:e2b-it-qat` | ~2 GB | Current default — 2B params, fits any 6 GB card |
+| `qwen2.5:7b` | ~5 GB | Better tool-use reliability; fits in 6 GB |
 | `qwen2.5:14b` | ~9 GB | Significant quality jump; needs 10 GB+ VRAM |
 
 ### Multi-GPU

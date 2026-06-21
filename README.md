@@ -28,7 +28,7 @@ Fundamentals Analyst┘
         │
   Portfolio Manager
         │
-  SIGNAL: BUY / OVERWEIGHT / HOLD / UNDERWEIGHT / SELL
+  SIGNAL: BUY / HOLD / SELL
 ```
 
 Everything streams live to the browser as agents work.
@@ -44,7 +44,7 @@ Everything streams live to the browser as agents work.
 | **All 4 analysts** | Technical (MACD/RSI/SMA), Sentiment (news-based), News (macro/global), Fundamentals (financials) |
 | **Bull/Bear debate** | Configurable rounds — researchers challenge each other's thesis |
 | **Risk assessment** | Three-way debate between aggressive, neutral, and conservative risk analysts |
-| **5-tier signals** | BUY · OVERWEIGHT · HOLD · UNDERWEIGHT · SELL with full PM rationale |
+| **3-tier signals** | BUY · HOLD · SELL with full PM rationale and size/confidence from risk judge |
 | **Local LLM support** | Full Ollama integration — run with zero API cost on your own hardware |
 | **Deep/Quick split** | Use a powerful model for reasoning (PM, risk judge), a fast one for the other 10 agents |
 | **PDF export** | Export any analysis to a formatted PDF; multi-select to bundle several runs into one document |

@@ -47,7 +47,7 @@ export default function AnalyzePage() {
     trade_date: today,
     analysts: ["market", "social", "news", "fundamentals"],
     llm_provider: "ollama",
-    deep_think_llm: "gemma4:e2b-it-qat",
+    deep_think_llm: "qwen2.5:7b",
     quick_think_llm: "gemma4:e2b-it-qat",
     max_debate_rounds: 1,
     max_risk_discuss_rounds: 1,

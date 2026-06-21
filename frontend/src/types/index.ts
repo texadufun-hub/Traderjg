@@ -48,9 +48,8 @@ export type Signal = "BUY" | "OVERWEIGHT" | "HOLD" | "UNDERWEIGHT" | "SELL";
 export type AnalystKey = "market" | "social" | "news" | "fundamentals";
 
 export type LLMProvider =
-  | "openai" | "anthropic" | "google" | "xai" | "deepseek"
-  | "dashscope" | "zhipu" | "minimax" | "openrouter"
-  | "ollama" | "bedrock" | "azure";
+  | "google_genai" | "openai" | "anthropic" | "xai"
+  | "openrouter" | "ollama" | "huggingface" | "litellm";
 
 export interface RunCreate {
   ticker: string;
@@ -76,6 +75,8 @@ export interface RunOut {
   status: "running" | "complete" | "error";
   signal: Signal | null;
   created_at: string;
+  llm_provider: string | null;
+  deep_think_llm: string | null;
 }
 
 export interface AnalysisResult {
@@ -95,6 +96,8 @@ export interface RunDetail extends RunOut {
   config_snapshot: string | null;
   result_json: string | null;
   error: string | null;
+  llm_provider: string | null;
+  deep_think_llm: string | null;
 }
 
 // ── SSE Events ────────────────────────────────────────────────

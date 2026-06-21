@@ -41,7 +41,46 @@ import models
 import schemas
 from agent_runner import AGENT_ORDER, run_analysis_worker, run_manager, executor
 
+# ── Secret Manager bootstrap ───────────────────────────────────────────────
+# Fetch API keys from GCP Secret Manager if not already in the environment.
+# Works locally via ADC (gcloud auth application-default login) and on
+# Cloud Run via the service account. load_dotenv() below can still override.
+_GCP_PROJECT = os.environ.get("GOOGLE_CLOUD_PROJECT", "733349864865")
+_SECRET_MAP = {
+    "GOOGLE_API_KEY": f"projects/{_GCP_PROJECT}/secrets/GEMINI_API_KEY/versions/latest",
+    "FRED_API_KEY":   f"projects/{_GCP_PROJECT}/secrets/FRED_API_KEY/versions/latest",
+}
+
+def _load_gcp_secrets() -> None:
+    try:
+        from google.cloud import secretmanager
+        client = secretmanager.SecretManagerServiceClient()
+        for env_var, secret_path in _SECRET_MAP.items():
+            if not os.environ.get(env_var):
+                try:
+                    resp = client.access_secret_version(name=secret_path)
+                    os.environ[env_var] = resp.payload.data.decode("utf-8").strip()
+                except Exception as e:
+                    print(f"[secrets] Could not load {env_var}: {e}")
+    except ImportError:
+        pass  # google-cloud-secret-manager not installed
+
+_load_gcp_secrets()
 load_dotenv()
+
+# Gemini 2.5 models reject an explicit thinking_level parameter — they manage
+# thinking internally. Patch _apply_reasoning to skip google_genai so the
+# model call goes through without the unsupported parameter.
+try:
+    import tradingagents.llm as _ta_llm
+    _orig_apply_reasoning = _ta_llm._apply_reasoning
+    def _patched_apply_reasoning(provider, effort, kwargs):
+        if provider == "google_genai":
+            return
+        _orig_apply_reasoning(provider, effort, kwargs)
+    _ta_llm._apply_reasoning = _patched_apply_reasoning
+except Exception:
+    pass
 
 app = FastAPI(title="Traderjg API", version="2.0.0")
 
@@ -61,31 +100,61 @@ MEMORY_LOG = DATA_DIR / "memory.json"
 RESULTS_DIR = DATA_DIR / "results"
 CACHE_DIR = DATA_DIR / "cache"
 
+# Clear corrupt cache CSVs on startup — TradingAgents writes partial files on
+# failed runs; pandas then chokes on them next time.
+_data_cache = RESULTS_DIR / "data_cache"
+if _data_cache.exists():
+    for _f in _data_cache.glob("*.csv"):
+        try:
+            import csv
+            with open(_f, newline="") as _fh:
+                rows = list(csv.reader(_fh))
+            if rows:
+                expected = len(rows[0])
+                if any(len(r) != expected for r in rows[1:] if r):
+                    _f.unlink()
+                    print(f"[startup] Removed corrupt cache: {_f.name}")
+        except Exception:
+            _f.unlink()
+            print(f"[startup] Removed unreadable cache: {_f.name}")
+
 
 # ── helpers ───────────────────────────────────────────────────────────────
 
-def _build_ta_config(req: schemas.RunCreate) -> dict:
-    from tradingagents.default_config import DEFAULT_CONFIG
-    cfg = DEFAULT_CONFIG.copy()
-    cfg["project_dir"] = str(DATA_DIR)
-    cfg["results_dir"] = str(RESULTS_DIR)
-    cfg["data_cache_dir"] = str(CACHE_DIR)
-    cfg["memory_log_path"] = str(MEMORY_LOG)
-    cfg["llm_provider"] = req.llm_provider
-    cfg["deep_think_llm"] = req.deep_think_llm
-    cfg["quick_think_llm"] = req.quick_think_llm
-    cfg["max_debate_rounds"] = req.max_debate_rounds
-    cfg["max_risk_discuss_rounds"] = req.max_risk_discuss_rounds
-    cfg["analyst_concurrency_limit"] = req.analyst_concurrency
-    cfg["output_language"] = req.output_language
-    cfg["checkpoint_enabled"] = req.checkpoint_enabled
+_LANG_MAP = {
+    "English": "en-US",
+    "Chinese": "zh-CN",
+    "TraditionalChinese": "zh-TW",
+    "Japanese": "ja-JP",
+    "Korean": "ko-KR",
+    "German": "de-DE",
+    # pass-through for already-BCP47 values
+    "en-US": "en-US", "zh-CN": "zh-CN", "zh-TW": "zh-TW",
+    "ja-JP": "ja-JP", "ko-KR": "ko-KR", "de-DE": "de-DE",
+}
+
+_PROVIDER_MAP = {
+    "google": "google_genai",  # old alias
+}
+
+
+def _build_ta_config(req: schemas.RunCreate):
+    from tradingagents.config import TradingAgentsConfig
+    provider = _PROVIDER_MAP.get(req.llm_provider, req.llm_provider)
+    language = _LANG_MAP.get(req.output_language, "en-US")
     if req.backend_url:
-        cfg["backend_url"] = req.backend_url
-    if req.temperature is not None:
-        cfg["temperature"] = req.temperature
-    if req.benchmark_ticker:
-        cfg["benchmark_ticker"] = req.benchmark_ticker
-    return cfg
+        # ollama client reads OLLAMA_HOST (no /v1 path)
+        os.environ["OLLAMA_HOST"] = req.backend_url.rstrip("/").removesuffix("/v1")
+    return TradingAgentsConfig(
+        results_dir=RESULTS_DIR,
+        llm_provider=provider,
+        deep_think_llm=req.deep_think_llm,
+        quick_think_llm=req.quick_think_llm,
+        max_debate_rounds=req.max_debate_rounds,
+        max_risk_discuss_rounds=req.max_risk_discuss_rounds,
+        max_recur_limit=300,
+        response_language=language,
+    )
 
 
 def _calc_pnl(trade: models.Trade) -> float | None:
@@ -203,12 +272,25 @@ async def create_run(payload: schemas.RunCreate, db: Session = Depends(database.
         database.SessionLocal,
     )
 
-    return schemas.RunOut.model_validate(row)
+    return _enrich_run(schemas.RunOut.model_validate(row), row)
+
+
+def _enrich_run(out: schemas.RunOut, row: models.Analysis) -> schemas.RunOut:
+    """Populate llm_provider / deep_think_llm from config_snapshot."""
+    if row.config_snapshot:
+        try:
+            cfg = json.loads(row.config_snapshot)
+            out.llm_provider = cfg.get("llm_provider")
+            out.deep_think_llm = cfg.get("deep_think_llm")
+        except Exception:
+            pass
+    return out
 
 
 @app.get("/runs", response_model=list[schemas.RunOut])
 def list_runs(db: Session = Depends(database.get_db)):
-    return db.query(models.Analysis).order_by(models.Analysis.created_at.desc()).all()
+    rows = db.query(models.Analysis).order_by(models.Analysis.created_at.desc()).all()
+    return [_enrich_run(schemas.RunOut.model_validate(r), r) for r in rows]
 
 
 @app.get("/runs/{run_id}", response_model=schemas.RunDetailOut)
@@ -217,6 +299,24 @@ def get_run(run_id: str, db: Session = Depends(database.get_db)):
     if not row:
         raise HTTPException(404, "Run not found")
     return schemas.RunDetailOut.model_validate(row)
+
+
+@app.get("/runs/{run_id}/log")
+def get_run_log(run_id: str):
+    from agent_runner import LOG_DIR
+    log_path = LOG_DIR / f"{run_id}.jsonl"
+    if not log_path.exists():
+        raise HTTPException(404, "Log not found")
+    entries = []
+    with log_path.open() as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                try:
+                    entries.append(json.loads(line))
+                except Exception:
+                    pass
+    return {"run_id": run_id, "entries": entries}
 
 
 @app.delete("/runs/{run_id}", status_code=204)

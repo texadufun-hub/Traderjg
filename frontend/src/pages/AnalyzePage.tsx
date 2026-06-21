@@ -5,6 +5,8 @@ import type { RunCreate, SSEEvent, AnalysisResult, AnalystKey, LLMProvider } fro
 import AgentTimeline from "../components/AgentTimeline";
 import StreamLog from "../components/StreamLog";
 import AnalysisResultView from "../components/AnalysisResult";
+import { exportAnalysesToPdf } from "../utils/exportPdf";
+import ModelBadge from "../components/ModelBadge";
 
 const inp: React.CSSProperties = {
   background: "#0f1117", border: "1px solid #2d3748", borderRadius: 8,
@@ -16,18 +18,14 @@ const card: React.CSSProperties = {
 };
 
 const LLM_PROVIDERS: { value: LLMProvider; label: string }[] = [
+  { value: "google_genai", label: "Google (Gemini)" },
   { value: "openai", label: "OpenAI" },
   { value: "anthropic", label: "Anthropic (Claude)" },
-  { value: "google", label: "Google (Gemini)" },
   { value: "xai", label: "xAI (Grok)" },
-  { value: "deepseek", label: "DeepSeek" },
-  { value: "dashscope", label: "Alibaba Qwen (DashScope)" },
-  { value: "zhipu", label: "Zhipu GLM" },
-  { value: "minimax", label: "MiniMax" },
   { value: "openrouter", label: "OpenRouter" },
   { value: "ollama", label: "Ollama (local)" },
-  { value: "bedrock", label: "AWS Bedrock" },
-  { value: "azure", label: "Azure OpenAI" },
+  { value: "huggingface", label: "HuggingFace" },
+  { value: "litellm", label: "LiteLLM" },
 ];
 
 const ANALYST_OPTIONS: { key: AnalystKey; label: string; desc: string }[] = [
@@ -48,15 +46,15 @@ export default function AnalyzePage() {
     ticker: "NVDA",
     trade_date: today,
     analysts: ["market", "social", "news", "fundamentals"],
-    llm_provider: "openai",
-    deep_think_llm: "gpt-4o",
-    quick_think_llm: "gpt-4o-mini",
+    llm_provider: "ollama",
+    deep_think_llm: "gemma4:e2b-it-qat",
+    quick_think_llm: "gemma4:e2b-it-qat",
     max_debate_rounds: 1,
     max_risk_discuss_rounds: 1,
     analyst_concurrency: 1,
     output_language: "English",
-    temperature: null,
-    backend_url: null,
+    temperature: 0.1,
+    backend_url: "http://10.0.0.189:11434",
     benchmark_ticker: null,
     checkpoint_enabled: false,
   });
@@ -210,7 +208,7 @@ export default function AnalyzePage() {
                 onChange={(e) => set("quick_think_llm", e.target.value)}
                 placeholder="gpt-4o-mini, claude-haiku…" />
             </div>
-            {(form.llm_provider === "ollama" || form.llm_provider === "azure") && (
+            {form.llm_provider === "ollama" && (
               <div style={{ gridColumn: "1 / -1" }}>
                 <label style={lbl}>Backend URL</label>
                 <input style={inp} value={form.backend_url ?? ""}
@@ -309,10 +307,21 @@ export default function AnalyzePage() {
             ? `Analyzing ${form.ticker} · ${form.trade_date}`
             : `Result — ${form.ticker}`}
         </h2>
+        <ModelBadge provider={form.llm_provider} model={form.deep_think_llm} />
         {phase === "done" && (
-          <button onClick={reset} style={{ marginLeft: "auto", padding: "6px 16px", borderRadius: 8, border: "1px solid #2d3748", background: "transparent", color: "#94a3b8", cursor: "pointer", fontSize: 13 }}>
-            + New Analysis
-          </button>
+          <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+            {result && (
+              <button
+                onClick={() => exportAnalysesToPdf([{ ticker: form.ticker, tradeDate: form.trade_date, result }])}
+                style={{ padding: "6px 16px", borderRadius: 8, border: "1px solid #6366f1", background: "transparent", color: "#818cf8", cursor: "pointer", fontSize: 13 }}
+              >
+                Export PDF
+              </button>
+            )}
+            <button onClick={reset} style={{ padding: "6px 16px", borderRadius: 8, border: "1px solid #2d3748", background: "transparent", color: "#94a3b8", cursor: "pointer", fontSize: 13 }}>
+              + New Analysis
+            </button>
+          </div>
         )}
       </div>
 

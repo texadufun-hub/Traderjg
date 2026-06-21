@@ -61,9 +61,8 @@ class PortfolioStats(BaseModel):
 # ── Analysis / Run schemas ─────────────────────────────────────
 
 LLM_PROVIDERS = [
-    "openai", "anthropic", "google", "xai", "deepseek",
-    "dashscope", "zhipu", "minimax", "openrouter", "ollama",
-    "bedrock", "azure",
+    "openai", "anthropic", "google_genai", "google",  # google=alias for google_genai
+    "xai", "openrouter", "ollama", "huggingface", "litellm",
 ]
 
 ANALYST_KEYS = ["market", "social", "news", "fundamentals"]
@@ -73,9 +72,9 @@ class RunCreate(BaseModel):
     ticker: str
     trade_date: str
     analysts: list[str] = ANALYST_KEYS
-    llm_provider: str = "openai"
-    deep_think_llm: str = "gpt-4o"
-    quick_think_llm: str = "gpt-4o-mini"
+    llm_provider: str = "google_genai"
+    deep_think_llm: str = "gemini-2.5-pro"
+    quick_think_llm: str = "gemini-2.5-pro"
     max_debate_rounds: int = 1
     max_risk_discuss_rounds: int = 1
     analyst_concurrency: int = 1
@@ -109,6 +108,8 @@ class RunOut(BaseModel):
     status: str
     signal: Optional[str] = None
     created_at: datetime
+    llm_provider: Optional[str] = None
+    deep_think_llm: Optional[str] = None
     model_config = {"from_attributes": True}
 
 

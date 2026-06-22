@@ -88,6 +88,15 @@ def _apply_dedup_patch() -> None:
                 _TOOL_LAST[tool.name] = result_str
                 # Post-process fundamentals output: format decimals as % so the
                 # model doesn't misinterpret raw ratios (e.g. 1.14 → 114.29%)
+                # Round raw EPS floats (4+ decimal places) to 2dp in earnings data
+                if tool.name in ("get_earnings_calendar", "get_fundamentals") and isinstance(result, str):
+                    def _eps_round(m: "re.Match[str]") -> str:
+                        return f"{m.group(1)}{float(m.group(2)):.2f}"
+                    result = re.sub(
+                        r"(EPS[^:\n]*?:\s*)(-?\d+\.\d{4,})",
+                        _eps_round, result, flags=re.IGNORECASE,
+                    )
+
                 if tool.name == "get_fundamentals" and isinstance(result, str):
                     import re
                     def _pct(m: "re.Match[str]") -> str:
@@ -727,6 +736,20 @@ def _sanity_check_debate_prices(result: dict, ticker: str, trade_date: str) -> d
     # Any mentioned price more than 30% above the real 52-week high is likely stale/pre-split.
     # Threshold: 1.3× real 52-week high (catches pre-split NVDA $378 vs real high $236).
     upper_bound = wk52_high * 1.3
+
+    # Magnitude qualifiers that indicate the value is NOT a per-share price
+    _MAGNITUDE_SUFFIXES = _re.compile(
+        r'\s*(?:million|billion|thousand|mn|bn|[MBK]\b)', _re.IGNORECASE
+    )
+    # Non-price financial context words (e.g. "$30 million investment")
+    # Note: avoid single-letter abbreviations (M/B/K) as they match mid-word with IGNORECASE
+    _NON_PRICE_CONTEXT = _re.compile(
+        r'(?:million|billion|thousand|mn|bn'
+        r'|investment|deal|facility|fund|revenue|loan|contract|grant|award'
+        r'|capex|spending|budget|commitment|raise|round|valuation)',
+        _re.IGNORECASE
+    )
+
     price_pattern = _re.compile(r'\$\s*([\d,]+(?:\.\d+)?)')
     flagged_fields: dict[str, list[str]] = {}
 
@@ -740,20 +763,33 @@ def _sanity_check_debate_prices(result: dict, ticker: str, trade_date: str) -> d
                 val = float(m.group(1).replace(",", ""))
             except ValueError:
                 continue
-            if val > upper_bound and val < upper_bound * 20:  # plausible stock price range
-                suspicious.append(f"${m.group(1)}")
+            if val <= upper_bound or val >= upper_bound * 20:
+                continue
+            # Skip if followed by a magnitude qualifier (not a per-share price)
+            after = text[m.end():m.end() + 20]
+            if _MAGNITUDE_SUFFIXES.match(after):
+                continue
+            # Skip if non-price context word appears within 30 chars after
+            context = text[max(0, m.start() - 5):m.end() + 30]
+            if _NON_PRICE_CONTEXT.search(context):
+                continue
+            suspicious.append(f"${m.group(1)}")
         if suspicious:
             flagged_fields[field] = list(set(suspicious))
 
     if flagged_fields:
+        # Use closing-price 52-week high (consistent with what the Technical Analyst reports)
+        # yfinance fiftyTwoWeekHigh is intraday; the report body typically uses closing highs
         for field, prices in flagged_fields.items():
             banner = (
-                f"\n\n> ⚠️ **PRICE GROUNDING WARNING**: The following price figure(s) in this "
-                f"section appear inconsistent with the real trading range "
-                f"(52-week high ${wk52_high:.2f}, current ~${real:.2f}): "
-                f"**{', '.join(prices)}**. "
-                f"These may be pre-split or hallucinated prices — verify against "
-                f"the Technical Analysis Report before acting on any price-based argument.\n\n"
+                f"\n\n> ⚠️ **PRICE GROUNDING WARNING**: The following per-share price figure(s) "
+                f"in this section appear inconsistent with the real trading range "
+                f"(52-week closing high ~${wk52_high:.2f}, current ~${real:.2f}). "
+                f"Note: the 52-week intraday high from yfinance may differ slightly from "
+                f"the 52-week closing high cited in the Technical Analysis Report — "
+                f"both are valid but label them correctly. "
+                f"Flagged values: **{', '.join(prices)}**. "
+                f"These may be pre-split or memorized training-data prices.\n\n"
             )
             result[field] = banner + result[field]
 

@@ -99,6 +99,16 @@ def _apply_dedup_patch() -> None:
                             rf"({re.escape(field)}): (-?\d+\.\d+(?:[eE][+-]?\d+)?)",
                             _pct, result,
                         )
+                    # yfinance debtToEquity is returned at 100× scale (percentage).
+                    # Label it explicitly so the model doesn't present 6.555 as a unitless ratio.
+                    def _de_label(m: "re.Match[str]") -> str:
+                        v = float(m.group(2))
+                        ratio = v / 100
+                        return f"{m.group(1)}: {v:.3f}% (ratio: {ratio:.4f} — i.e. ${ratio:.2f} debt per $1 equity)"
+                    result = re.sub(
+                        r"(Debt to Equity): (-?\d+\.\d+(?:[eE][+-]?\d+)?)",
+                        _de_label, result,
+                    )
                 return result
 
             return StructuredTool.from_function(
@@ -572,7 +582,7 @@ def _extract_entities_from_tool_output(raw: str) -> set[str]:
     return {e for e in entities if len(e) > 4}
 
 
-def _sanity_check_entities(result: dict) -> dict:
+def _sanity_check_entities(result: dict, ticker: str = "") -> dict:
     """Flag institutional entity names in news_report not present in raw tool data."""
     news = result.get("news_report")
     if not isinstance(news, str) or not news:
@@ -595,9 +605,19 @@ def _sanity_check_entities(result: dict) -> dict:
         "Seeking Alpha", "Wall Street", "Federal Reserve", "Goldman Sachs",
         "Morgan Stanley", "Bank of America", "Wells Fargo", "Citigroup",
     }
+    # Extract subject company name from get_fundamentals output
+    raw_fundamentals = _TOOL_LAST.get("get_fundamentals", "")
+    company_name_match = _re.search(r"^Name:\s*(.+)$", raw_fundamentals, _re.MULTILINE)
+    if company_name_match:
+        _KNOWN_SOURCES.add(company_name_match.group(1).strip())
+    if ticker:
+        _KNOWN_SOURCES.add(ticker.upper())
+        _KNOWN_SOURCES.add(ticker.lower())
+
     report_entities = {
         e for e in report_entities
-        if not any(known.lower() in e.lower() for known in _KNOWN_SOURCES)
+        if not any(known.lower() in e.lower() or e.lower() in known.lower()
+                   for known in _KNOWN_SOURCES)
     }
 
     fabricated = {
@@ -844,7 +864,7 @@ def run_analysis_worker(
         final_state, signal = ta.propagate(ticker, trade_date, on_state=_on_state)
         result = extract_result(final_state, signal)
         result = _sanity_check_price(result, ticker, trade_date)
-        result = _sanity_check_entities(result)
+        result = _sanity_check_entities(result, ticker=ticker)
 
         # Persist to DB
         db = session_factory()

@@ -7,6 +7,8 @@
 > **NO FALLBACK: If a tool returns no data for a section, write "Data not available" for that section. Do NOT use your "internal knowledge base", "training data", or "general knowledge" to fill any gap. If you find yourself writing those phrases, stop and replace the section with "Data not available".**
 >
 > **REVENUE REPORTING — MANDATORY: Your report MUST begin the valuation section with TTM/annual revenue as the first number stated, taken verbatim from the `Revenue (TTM)` line in `get_fundamentals` output (e.g., "Revenue (TTM): $253.49B"). Only after stating TTM revenue should you reference a quarterly figure as a breakout. Never open with a quarterly figure — a single quarter is NOT the company's revenue.**
+>
+> **FREE CASH FLOW — TWO SOURCES, REPORT BOTH: `get_fundamentals` reports `Free Cash Flow` as a fiscal-year TTM figure. `get_cashflow` reports quarterly cash flows that you may sum to compute a trailing 4-quarter FCF. These two figures often differ because they use different calculation windows (fiscal year vs. last 4 calendar quarters). Always report BOTH with their source labels: (1) "FCF (yfinance fiscal TTM): $X.XB — from get_fundamentals" and (2) "FCF (4-quarter sum): $Y.YB — Q1=$A, Q2=$B, Q3=$C, Q4=$D from get_cashflow". Do not pick one and discard the other.**
 
 > **CITE SPECIFIC VALUES: When numeric data (prices, ratios, indicator values, percentages) is present in any tool response or analyst report in your context, cite the exact number. NEVER write "can be inferred", "not directly provided", "typically suggests", or "elevated/strong" as a substitute for a specific number you already have. If the value is in your context, state it explicitly.**
 

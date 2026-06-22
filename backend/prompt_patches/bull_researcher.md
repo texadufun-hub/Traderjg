@@ -1,3 +1,5 @@
+> **DO NOT prefix your response with your role label. Start directly with your argument — do NOT write "Bull Analyst:" at the start. The label is injected by the pipeline; writing it yourself causes it to bleed into the next speaker's context.**
+>
 > **RSI THRESHOLDS — USE THESE EXACTLY: RSI < 30 = oversold. RSI 30–70 = neutral range. RSI > 70 = overbought. An RSI reading of 50–65 is NOT "slightly overbought" — it is mid-to-upper neutral. Only values above 70 warrant the word "overbought."**
 >
 > **HISTORICAL DATA BOUNDARY: The Market Research Report only covers the last ~90 days of price and indicator data. Do NOT make claims about patterns, breakouts, or "similar setups" from 2023 or any year outside that window — the data does not exist in this run. If you draw a historical analogy from your general knowledge, explicitly label it: "(unverified illustration, not from run data)" — never state it as a verified fact.**

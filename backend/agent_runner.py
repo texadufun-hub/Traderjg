@@ -99,12 +99,17 @@ def _apply_dedup_patch() -> None:
                             rf"({re.escape(field)}): (-?\d+\.\d+(?:[eE][+-]?\d+)?)",
                             _pct, result,
                         )
-                    # yfinance debtToEquity is returned at 100× scale (percentage).
-                    # Label it explicitly so the model doesn't present 6.555 as a unitless ratio.
+                    # yfinance debtToEquity is a snapshot percentage at 100× scale.
+                    # It may differ from Total Debt ÷ Common Equity on the balance sheet
+                    # due to different time periods or debt definitions.
                     def _de_label(m: "re.Match[str]") -> str:
                         v = float(m.group(2))
                         ratio = v / 100
-                        return f"{m.group(1)}: {v:.3f}% (ratio: {ratio:.4f} — i.e. ${ratio:.2f} debt per $1 equity)"
+                        return (
+                            f"{m.group(1)}: {v:.3f}% yfinance snapshot "
+                            f"(≈ {ratio:.4f} as a ratio; may differ from balance-sheet-derived "
+                            f"Total Debt ÷ Common Equity due to timing/definition differences)"
+                        )
                     result = re.sub(
                         r"(Debt to Equity): (-?\d+\.\d+(?:[eE][+-]?\d+)?)",
                         _de_label, result,
@@ -538,6 +543,31 @@ def extract_result(final_state: Any, signal: Any) -> dict:
     # Fundamentals: if empty string, try to surface a data-unavailable note
     fundamentals = to_json(_get(final_state, "fundamentals_report")) or None
 
+    # Relabel the Trader's "FINAL TRANSACTION PROPOSAL" to distinguish it from the
+    # PM's canonical signal. Both use the same label by design in TradingAgents, but
+    # the Trader proposes BEFORE the risk debate — the PM decides AFTER. Showing both
+    # with identical labels creates A-vs-B contradictions in the final report.
+    trader_plan = to_json(_get(final_state, "trader_investment_plan"))
+    if isinstance(trader_plan, str):
+        trader_plan = trader_plan.replace(
+            "FINAL TRANSACTION PROPOSAL", "TRADER'S PROPOSED SIGNAL (pre-risk-debate)"
+        )
+        # Detect if Trader's proposed signal disagrees with PM's final signal
+        import re as _re2
+        trader_match = _re2.search(
+            r"TRADER'S PROPOSED SIGNAL.*?:\s*\*{0,2}\s*(BUY|SELL|HOLD)\b",
+            trader_plan, _re2.IGNORECASE,
+        )
+        if trader_match and signal_str:
+            trader_sig = trader_match.group(1).upper()
+            pm_sig = signal_str.upper()
+            if trader_sig != pm_sig:
+                trader_plan += (
+                    f"\n\n> ℹ️ **Pipeline note**: The Trader initially proposed **{trader_sig}** "
+                    f"above. After the risk debate, the Portfolio Manager issued a final decision "
+                    f"of **{pm_sig}**. The PM's signal is authoritative — see PM Decision section."
+                )
+
     return {
         "signal": signal_str,
         "signal_detail": signal_detail,
@@ -545,7 +575,7 @@ def extract_result(final_state: Any, signal: Any) -> dict:
         "fundamentals_report": fundamentals,
         "sentiment_report": to_json(_get(final_state, "sentiment_report")),
         "news_report": to_json(_get(final_state, "news_report")),
-        "trader_investment_plan": to_json(_get(final_state, "trader_investment_plan")),
+        "trader_investment_plan": trader_plan,
         "final_trade_decision": decision,
         "investment_debate": debate_to_text(_get(final_state, "investment_debate_state")),
         "risk_debate": debate_to_text(_get(final_state, "risk_debate_state")),

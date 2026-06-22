@@ -706,6 +706,59 @@ def _sanity_check_entities(result: dict, ticker: str = "") -> dict:
 
 _PRICE_DEVIATION_THRESHOLD = 0.50  # flag / auto-correct if >50% off real price
 
+# ── Debate price hallucination check ──────────────────────────────────────
+
+def _sanity_check_debate_prices(result: dict, ticker: str, trade_date: str) -> dict:
+    """Scan debate text for price figures inconsistent with the real trading range."""
+    real = _fetch_real_price(ticker, trade_date)
+    if not real or real <= 0:
+        return result
+
+    # Fetch 52-week range from yfinance if available
+    try:
+        import yfinance as yf
+        info = yf.Ticker(ticker).info
+        wk52_high = float(info.get("fiftyTwoWeekHigh") or real * 1.5)
+        wk52_low  = float(info.get("fiftyTwoWeekLow")  or real * 0.5)
+    except Exception:
+        wk52_high = real * 1.5
+        wk52_low  = real * 0.5
+
+    # Any mentioned price more than 30% above the real 52-week high is likely stale/pre-split.
+    # Threshold: 1.3× real 52-week high (catches pre-split NVDA $378 vs real high $236).
+    upper_bound = wk52_high * 1.3
+    price_pattern = _re.compile(r'\$\s*([\d,]+(?:\.\d+)?)')
+    flagged_fields: dict[str, list[str]] = {}
+
+    for field in ("investment_debate", "risk_debate"):
+        text = result.get(field) or ""
+        if not isinstance(text, str):
+            continue
+        suspicious = []
+        for m in price_pattern.finditer(text):
+            try:
+                val = float(m.group(1).replace(",", ""))
+            except ValueError:
+                continue
+            if val > upper_bound and val < upper_bound * 20:  # plausible stock price range
+                suspicious.append(f"${m.group(1)}")
+        if suspicious:
+            flagged_fields[field] = list(set(suspicious))
+
+    if flagged_fields:
+        for field, prices in flagged_fields.items():
+            banner = (
+                f"\n\n> ⚠️ **PRICE GROUNDING WARNING**: The following price figure(s) in this "
+                f"section appear inconsistent with the real trading range "
+                f"(52-week high ${wk52_high:.2f}, current ~${real:.2f}): "
+                f"**{', '.join(prices)}**. "
+                f"These may be pre-split or hallucinated prices — verify against "
+                f"the Technical Analysis Report before acting on any price-based argument.\n\n"
+            )
+            result[field] = banner + result[field]
+
+    return result
+
 def _fetch_real_price(ticker: str, trade_date: str) -> float | None:
     """Return the actual closing price for ticker on or just before trade_date."""
     try:
@@ -920,6 +973,7 @@ def run_analysis_worker(
         result = extract_result(final_state, signal)
         result = _sanity_check_price(result, ticker, trade_date)
         result = _sanity_check_entities(result, ticker=ticker)
+        result = _sanity_check_debate_prices(result, ticker, trade_date)
 
         # Persist to DB
         db = session_factory()

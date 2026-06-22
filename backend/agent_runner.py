@@ -565,6 +565,8 @@ def run_analysis_worker(
     session_factory,
 ) -> None:
     """Runs TradingAgents synchronously in a thread-pool worker."""
+    _saved_fa: Any = None  # saved for fundamentals-patch restore in finally
+
     try:
         from tradingagents.graph.trading_graph import TradingAgentsGraph
 
@@ -575,6 +577,25 @@ def run_analysis_worker(
         # Reset per-run dedup counters (see module-level patch below)
         _DEDUP_SEEN.clear()
         _NAME_SEEN.clear()
+
+        # ── Fundamentals → Gemini override ────────────────────────────────
+        # Route the Fundamentals Analyst to Gemini regardless of the run's
+        # llm_provider — local models (7B and below) consistently hallucinate
+        # balance-sheet values while fluently ignoring the real tool output.
+        # Must be applied before TradingAgentsGraph() calls _build_analyst_nodes().
+        # Restored unconditionally in the finally block below.
+        if "fundamentals" in analysts:
+            try:
+                import tradingagents.graph.setup as _gs
+                from tradingagents.llm import build_chat_model as _bcm
+                _saved_fa = _gs.create_fundamentals_analyst
+                _gemini_llm = _bcm(
+                    "google_genai", "gemini-2.5-pro",
+                    callbacks=[callback, logger],
+                )
+                _gs.create_fundamentals_analyst = lambda _: _saved_fa(_gemini_llm)
+            except Exception:
+                _saved_fa = None  # patch failed silently — run without override
 
         ta = TradingAgentsGraph(
             selected_analysts=tuple(analysts),
@@ -683,3 +704,13 @@ def run_analysis_worker(
             db.close()
 
         run_manager.fail(run_id, error_msg)
+
+    finally:
+        # Always restore the fundamentals analyst creator regardless of
+        # success, failure, or exception anywhere in graph construction or execution.
+        if _saved_fa is not None:
+            try:
+                import tradingagents.graph.setup as _gs
+                _gs.create_fundamentals_analyst = _saved_fa
+            except Exception:
+                pass

@@ -447,10 +447,21 @@ _PLACEHOLDER_RE = _re.compile(
     _re.IGNORECASE,
 )
 
+_SAME_DATE_RANGE_RE = _re.compile(
+    r'between\s+'
+    r'((?:January|February|March|April|May|June|July|August|September|'
+    r'October|November|December)\s+\d{1,2}(?:,?\s*\d{4})?)'
+    r'\s+and\s+\1',
+    _re.IGNORECASE,
+)
+
+
 def _clean_llm_output(text: str) -> str:
-    """Strip stray chat-template tokens and unfilled placeholder variables."""
+    """Strip stray chat-template tokens, unfilled placeholders, and same-date ranges."""
     text = _TEMPLATE_TOKEN_RE.sub("", text)
     text = _PLACEHOLDER_RE.sub("", text)
+    # "between June 4 and June 4, 2026" → "on June 4, 2026"
+    text = _SAME_DATE_RANGE_RE.sub(r"on \1", text)
     return text.strip()
 
 

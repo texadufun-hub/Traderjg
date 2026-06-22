@@ -23,8 +23,10 @@ LOG_DIR.mkdir(parents=True, exist_ok=True)
 # stop signal after 3 identical calls. Prevents small models from looping.
 # _DEDUP_SEEN is cleared at the start of each run.
 
-_DEDUP_SEEN: dict[str, int] = {}   # keyed by tool+args (exact duplicate detection)
+_DEDUP_SEEN: dict[str, int] = {}    # keyed by tool+args (exact duplicate detection)
 _NAME_SEEN: dict[str, int] = {}    # keyed by tool name only (total call cap)
+_DEDUP_CACHE: dict[str, str] = {}  # tool+args → last successful result text
+_TOOL_LAST: dict[str, str] = {}    # tool name → most recent successful result text
 
 # Max identical (tool+args) calls per key
 _EXACT_LIMITS: dict[str, int] = {
@@ -53,20 +55,37 @@ def _apply_dedup_patch() -> None:
                 # Level 1: total calls by name
                 _NAME_SEEN[tool.name] = _NAME_SEEN.get(tool.name, 0) + 1
                 if _NAME_SEEN[tool.name] > name_limit:
+                    cached = _TOOL_LAST.get(tool.name, "")
+                    if cached:
+                        return (
+                            f"[STOP — call limit reached for {tool.name}. "
+                            f"Use the data below from your earlier call — do not call this tool again.]\n\n"
+                            f"{cached}"
+                        )
                     return (
-                        "[STOP] You have already retrieved sufficient data from this tool. "
-                        "Your earlier tool responses contained real data — use those values now. "
-                        "Write your final report using the data already returned to you."
+                        "[STOP] You have called this tool enough times. "
+                        "Write your final report using the data from your earlier tool responses."
                     )
                 # Level 2: exact duplicate check
                 key = f"{tool.name}:{json.dumps(kwargs, sort_keys=True, default=str)}"
                 _DEDUP_SEEN[key] = _DEDUP_SEEN.get(key, 0) + 1
                 if _DEDUP_SEEN[key] > exact_limit:
+                    cached = _DEDUP_CACHE.get(key, _TOOL_LAST.get(tool.name, ""))
+                    if cached:
+                        return (
+                            f"[STOP — duplicate call blocked for {tool.name}. "
+                            f"Here is the data you already retrieved — use these values now.]\n\n"
+                            f"{cached}"
+                        )
                     return (
-                        "[STOP] You already have this exact data from an earlier call. "
-                        "Use the values from your previous successful tool response to write your report."
+                        "[STOP] You already retrieved this data. "
+                        "Use the values from your earlier successful tool response."
                     )
                 result = tool.invoke(kwargs)
+                # Cache the successful result for future STOP messages
+                result_str = str(result)
+                _DEDUP_CACHE[key] = result_str
+                _TOOL_LAST[tool.name] = result_str
                 # Post-process fundamentals output: format decimals as % so the
                 # model doesn't misinterpret raw ratios (e.g. 1.14 → 114.29%)
                 if tool.name == "get_fundamentals" and isinstance(result, str):
@@ -565,7 +584,8 @@ def run_analysis_worker(
     session_factory,
 ) -> None:
     """Runs TradingAgents synchronously in a thread-pool worker."""
-    _saved_fa: Any = None  # saved for fundamentals-patch restore in finally
+    # Maps analyst key → original creator function (populated if Gemini patch applied)
+    _saved_creators: dict[str, Any] = {}
 
     try:
         from tradingagents.graph.trading_graph import TradingAgentsGraph
@@ -574,28 +594,39 @@ def run_analysis_worker(
         callback = SSECallbackHandler(q, loop)
         logger = LoggingCallbackHandler(run_id)
 
-        # Reset per-run dedup counters (see module-level patch below)
+        # Reset per-run dedup counters and caches
         _DEDUP_SEEN.clear()
         _NAME_SEEN.clear()
+        _DEDUP_CACHE.clear()
+        _TOOL_LAST.clear()
 
-        # ── Fundamentals → Gemini override ────────────────────────────────
-        # Route the Fundamentals Analyst to Gemini regardless of the run's
-        # llm_provider — local models (7B and below) consistently hallucinate
-        # balance-sheet values while fluently ignoring the real tool output.
+        # ── Gemini analyst routing ─────────────────────────────────────────
+        # These analyst nodes are routed to Gemini because local 7B models
+        # consistently fabricate data for them despite receiving real tool output.
         # Must be applied before TradingAgentsGraph() calls _build_analyst_nodes().
         # Restored unconditionally in the finally block below.
-        if "fundamentals" in analysts:
+        #
+        # Map: analyst key in selected_analysts → setup.py attribute name
+        _GEMINI_ANALYST_ATTRS: dict[str, str] = {
+            "fundamentals": "create_fundamentals_analyst",
+            "social":       "create_social_media_analyst",
+        }
+        _active_gemini = [k for k in _GEMINI_ANALYST_ATTRS if k in analysts]
+        if _active_gemini:
             try:
                 import tradingagents.graph.setup as _gs
                 from tradingagents.llm import build_chat_model as _bcm
-                _saved_fa = _gs.create_fundamentals_analyst
                 _gemini_llm = _bcm(
                     "google_genai", "gemini-2.5-pro",
                     callbacks=[callback, logger],
                 )
-                _gs.create_fundamentals_analyst = lambda _: _saved_fa(_gemini_llm)
+                for analyst_key in _active_gemini:
+                    attr = _GEMINI_ANALYST_ATTRS[analyst_key]
+                    orig = getattr(_gs, attr)
+                    _saved_creators[attr] = orig
+                    setattr(_gs, attr, lambda _, _orig=orig: _orig(_gemini_llm))
             except Exception:
-                _saved_fa = None  # patch failed silently — run without override
+                _saved_creators = {}  # patch failed — run without override
 
         ta = TradingAgentsGraph(
             selected_analysts=tuple(analysts),
@@ -706,11 +737,11 @@ def run_analysis_worker(
         run_manager.fail(run_id, error_msg)
 
     finally:
-        # Always restore the fundamentals analyst creator regardless of
-        # success, failure, or exception anywhere in graph construction or execution.
-        if _saved_fa is not None:
+        # Always restore all patched analyst creators regardless of outcome.
+        if _saved_creators:
             try:
                 import tradingagents.graph.setup as _gs
-                _gs.create_fundamentals_analyst = _saved_fa
+                for attr, orig in _saved_creators.items():
+                    setattr(_gs, attr, orig)
             except Exception:
                 pass

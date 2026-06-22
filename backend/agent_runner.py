@@ -611,6 +611,7 @@ def run_analysis_worker(
             "fundamentals": "create_fundamentals_analyst",
             "social":       "create_social_media_analyst",
             "news":         "create_news_analyst",
+            "market":       "create_market_analyst",
         }
         _active_gemini = [k for k in _GEMINI_ANALYST_ATTRS if k in analysts]
         if _active_gemini:

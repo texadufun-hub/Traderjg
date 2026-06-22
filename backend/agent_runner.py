@@ -444,14 +444,52 @@ def extract_result(final_state: Any, signal: Any) -> dict:
                 return val.strip()
         return None
 
+    # Normalize the TradeRecommendation signal object into a clean string + dict
+    signal_str: str | None = None
+    signal_detail: dict | None = None
+    if signal is not None:
+        if hasattr(signal, "model_dump"):
+            d = signal.model_dump()
+            # Apply stop_loss / target_price sanity check on the structured signal
+            entry = d.get("entry_reference_price")
+            stop = d.get("stop_loss")
+            target = d.get("target_price")
+            sig_name = d.get("signal", "")
+            if entry and stop:
+                buy, sell = sig_name == "BUY", sig_name == "SELL"
+                wrong_side = (buy and stop > entry) or (sell and stop < entry)
+                if wrong_side:
+                    d["target_price"] = stop if target is None else target
+                    d["stop_loss"] = None
+                    d["warning_message"] = (
+                        (d.get("warning_message") or "") +
+                        f" [AUTO-CORRECTED: stop_loss={stop} was above entry on BUY; moved to target_price.]"
+                    ).strip()
+                elif stop > entry * 3 or stop < 0:
+                    d["stop_loss"] = None
+            signal_str = d.get("signal") or str(signal)
+            signal_detail = d
+        else:
+            signal_str = str(signal)
+
+    # Build final_trade_decision: prefer state value, fall back to signal_detail repr
+    raw_decision = _get(final_state, "final_trade_decision")
+    decision = to_json(raw_decision)
+    if not decision and signal_detail:
+        decision = signal_detail
+
+    # Fundamentals: if empty string, try to surface a data-unavailable note
+    fundamentals = to_json(_get(final_state, "fundamentals_report")) or None
+
     return {
-        "signal": str(signal) if signal else None,
+        "signal": signal_str,
+        "signal_detail": signal_detail,
         "market_report": to_json(_get(final_state, "market_report")),
-        "fundamentals_report": to_json(_get(final_state, "fundamentals_report")),
+        "fundamentals_report": fundamentals,
         "sentiment_report": to_json(_get(final_state, "sentiment_report")),
         "news_report": to_json(_get(final_state, "news_report")),
         "trader_investment_plan": to_json(_get(final_state, "trader_investment_plan")),
-        "final_trade_decision": to_json(_get(final_state, "final_trade_decision")),
+        "final_trade_decision": decision,
         "investment_debate": debate_to_text(_get(final_state, "investment_debate_state")),
         "risk_debate": debate_to_text(_get(final_state, "risk_debate_state")),
     }

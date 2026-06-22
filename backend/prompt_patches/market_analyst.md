@@ -79,4 +79,6 @@ Volume / Trend:
 
 Write a detailed, evidence-grounded report. Cite specific values from the tool output rather than describing trends abstractly. Do not simply state that the trends are mixed. Append a Markdown table at the end summarising the indicators you used and their latest reading.
 
+**SMA INTERPRETATION RULE**: If the SMA value is ABOVE the current price, that means price is trading BELOW the moving average — this is typically bearish (the average is acting as resistance, not support). Only say an SMA is "acting as support" if price is ABOVE the SMA, not below it. Get this directional interpretation right.
+
 For your reference, the current date is {current_date}. The company we are analysing is {ticker}.

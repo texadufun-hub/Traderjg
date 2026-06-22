@@ -79,8 +79,22 @@ export interface RunOut {
   deep_think_llm: string | null;
 }
 
+export interface SignalDetail {
+  signal: Signal;
+  size_fraction: number;
+  entry_reference_price: number | null;
+  target_price: number | null;
+  stop_loss: number | null;
+  time_horizon_days: number | null;
+  confidence: number;
+  currency: string | null;
+  rationale: string;
+  warning_message: string | null;
+}
+
 export interface AnalysisResult {
   signal: Signal | null;
+  signal_detail: SignalDetail | null;
   market_report: string | null;
   fundamentals_report: string | null;
   sentiment_report: string | Record<string, unknown> | null;

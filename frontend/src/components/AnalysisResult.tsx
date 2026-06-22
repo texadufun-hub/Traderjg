@@ -58,6 +58,7 @@ function Section({ title, content, defaultOpen = false }: {
 }
 
 export default function AnalysisResult({ result, ticker, tradeDate }: Props) {
+  const sd = result.signal_detail;
   return (
     <div>
       {/* Hero signal */}
@@ -68,7 +69,7 @@ export default function AnalysisResult({ result, ticker, tradeDate }: Props) {
         border: "1px solid #2d3748",
         marginBottom: 20,
         display: "flex",
-        alignItems: "center",
+        alignItems: "flex-start",
         justifyContent: "space-between",
         flexWrap: "wrap",
         gap: 12,
@@ -76,6 +77,28 @@ export default function AnalysisResult({ result, ticker, tradeDate }: Props) {
         <div>
           <div style={{ fontSize: 22, fontWeight: 800, color: "#e2e8f0" }}>{ticker}</div>
           <div style={{ color: "#64748b", fontSize: 13 }}>Analysis date: {tradeDate}</div>
+          {sd && (
+            <div style={{ marginTop: 10, display: "flex", flexWrap: "wrap", gap: 16 }}>
+              {sd.entry_reference_price != null && (
+                <span style={{ fontSize: 12, color: "#94a3b8" }}>Entry <strong style={{ color: "#e2e8f0" }}>${sd.entry_reference_price.toFixed(2)}</strong></span>
+              )}
+              {sd.target_price != null && (
+                <span style={{ fontSize: 12, color: "#94a3b8" }}>Target <strong style={{ color: "#4ade80" }}>${sd.target_price.toFixed(2)}</strong></span>
+              )}
+              {sd.stop_loss != null && (
+                <span style={{ fontSize: 12, color: "#94a3b8" }}>Stop <strong style={{ color: "#f87171" }}>${sd.stop_loss.toFixed(2)}</strong></span>
+              )}
+              {sd.size_fraction != null && (
+                <span style={{ fontSize: 12, color: "#94a3b8" }}>Size <strong style={{ color: "#e2e8f0" }}>{(sd.size_fraction * 100).toFixed(0)}%</strong></span>
+              )}
+              {sd.confidence != null && (
+                <span style={{ fontSize: 12, color: "#94a3b8" }}>Conf <strong style={{ color: "#e2e8f0" }}>{(sd.confidence * 100).toFixed(0)}%</strong></span>
+              )}
+            </div>
+          )}
+          {sd?.warning_message && (
+            <div style={{ marginTop: 8, fontSize: 11, color: "#f59e0b", maxWidth: 500 }}>{sd.warning_message}</div>
+          )}
         </div>
         <div style={{ textAlign: "right" }}>
           <div style={{ color: "#64748b", fontSize: 12, marginBottom: 6 }}>PORTFOLIO MANAGER SIGNAL</div>

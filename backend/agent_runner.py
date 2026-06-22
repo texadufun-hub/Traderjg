@@ -620,11 +620,17 @@ def _sanity_check_entities(result: dict, ticker: str = "") -> dict:
 
     raw_holders = _TOOL_LAST.get("get_institutional_holders", "")
     raw_insiders = _TOOL_LAST.get("get_insider_transactions", "")
-    if not raw_holders and not raw_insiders:
+    raw_news = _TOOL_LAST.get("get_news", "")
+    raw_global_news = _TOOL_LAST.get("get_global_news", "")
+    if not raw_holders and not raw_insiders and not raw_news:
         return result
 
     real_entities = _extract_entities_from_tool_output(raw_holders)
     real_entities.update(_extract_entities_from_tool_output(raw_insiders))
+    # News articles legitimately mention entity names — include them as real sources.
+    # MarketBeat-style "XYZ purchased N shares of NVDA" headlines are from real 13F filings.
+    real_entities.update(_extract_entities_from_text(raw_news))
+    real_entities.update(_extract_entities_from_text(raw_global_news))
 
     # Scan full news report for entity names (sentence splitter would break on "Inc.")
     report_entities = _extract_entities_from_text(news)
@@ -663,17 +669,25 @@ def _sanity_check_entities(result: dict, ticker: str = "") -> dict:
     }
 
     if fabricated:
+        # Redact fabricated entity names from body text so they can't be read as fact
+        redacted_news = news
+        for entity in fabricated:
+            redacted_news = redacted_news.replace(
+                entity,
+                f"[REDACTED — '{entity}' not found in any tool output]"
+            )
         banner = (
             "\n\n> ⚠️ **ENTITY SANITY CHECK FAILED**: The following institutional entity "
-            f"name(s) appear in this report but were NOT found in the raw tool output "
-            f"(get_institutional_holders / get_insider_transactions): "
-            f"**{', '.join(sorted(fabricated))}**. "
-            "These names may be fabricated. Cross-check before acting on this section.\n\n"
+            f"name(s) appeared in this report but were NOT found in any raw tool output "
+            f"(get_news, get_institutional_holders, get_insider_transactions). "
+            f"Mentions have been redacted in the body text: "
+            f"**{', '.join(sorted(fabricated))}**.\n\n"
         )
-        result["news_report"] = banner + news
+        result["news_report"] = banner + redacted_news
         import logging as _logging
         _logging.getLogger(__name__).warning(
-            "ENTITY_SANITY_FAIL run detected fabricated institutional names: %s", fabricated
+            "ENTITY_SANITY_FAIL: fabricated institutional names detected and redacted: %s",
+            fabricated
         )
 
     return result

@@ -405,10 +405,19 @@ import re as _re
 _TEMPLATE_TOKEN_RE = _re.compile(
     r"<\|[^|>]*\|>|<channel\|[^>]*>|\[INST\]|\[/INST\]|<<SYS>>|<</SYS>>|<\|im_start\|>|<\|im_end\|>"
 )
+# Unfilled template placeholders the model echoes literally (e.g. "$X", "$Y", "[amount]")
+_PLACEHOLDER_RE = _re.compile(
+    r'\$[A-Z]\b'                  # $X, $Y, $Z
+    r'|\[\s*(?:amount|value|number|price|ticker|date|name)\s*\]'  # [amount] etc.
+    r'|\{[A-Z_]+\}',              # {PLACEHOLDER} style
+    _re.IGNORECASE,
+)
 
 def _clean_llm_output(text: str) -> str:
-    """Strip stray chat-template tokens that small models leak into output."""
-    return _TEMPLATE_TOKEN_RE.sub("", text).strip()
+    """Strip stray chat-template tokens and unfilled placeholder variables."""
+    text = _TEMPLATE_TOKEN_RE.sub("", text)
+    text = _PLACEHOLDER_RE.sub("", text)
+    return text.strip()
 
 
 # ── Result extraction ──────────────────────────────────────────────────────
@@ -533,41 +542,68 @@ def _fetch_real_price(ticker: str, trade_date: str) -> float | None:
 
 
 def _sanity_check_price(result: dict, ticker: str, trade_date: str) -> dict:
-    """Auto-correct entry_reference_price if it deviates >50% from yfinance close."""
+    """Populate/correct entry_reference_price and flag size_fraction inconsistencies."""
+    import re as _re
+
     real = _fetch_real_price(ticker, trade_date)
-    if real is None:
-        return result
 
-    decision = result.get("final_trade_decision")
-    if not isinstance(decision, dict):
-        return result
+    # Also apply sanity checks to signal_detail (the structured TradeRecommendation)
+    for key in ("final_trade_decision", "signal_detail"):
+        decision = result.get(key)
+        if not isinstance(decision, dict):
+            continue
 
-    model_price = decision.get("entry_reference_price")
-    if not model_price or real <= 0:
-        return result
+        # ── entry_reference_price: populate if null, correct if wrong ────
+        model_price = decision.get("entry_reference_price")
+        if real and real > 0:
+            if not model_price:
+                # Null entry price — populate from real close automatically
+                decision["entry_reference_price"] = real
+            else:
+                deviation = abs(model_price - real) / real
+                if deviation > _PRICE_DEVIATION_THRESHOLD:
+                    decision["entry_reference_price"] = real
+                    w = (
+                        f"[PRICE SANITY] Model stated ${model_price:.2f}; "
+                        f"yfinance close ${real:.2f} ({deviation*100:.0f}% deviation). "
+                        "entry_reference_price auto-corrected."
+                    )
+                    decision["warning_message"] = (
+                        w + " " + (decision.get("warning_message") or "")
+                    ).strip()
+                    if key == "signal_detail" and result.get("market_report"):
+                        banner = (
+                            f"\n\n> ⚠️ **PRICE WARNING**: Model stated ~${model_price:.0f}; "
+                            f"real close is ${real:.2f}. Treat price figures with caution.\n\n"
+                        )
+                        result["market_report"] = banner + result["market_report"]
 
-    deviation = abs(model_price - real) / real
-    if deviation <= _PRICE_DEVIATION_THRESHOLD:
-        return result
-
-    # Auto-correct the structured price field
-    decision["entry_reference_price"] = real
-    warning = (
-        f"[PRICE SANITY] Model stated entry ${model_price:.2f} but yfinance close is "
-        f"${real:.2f} ({deviation * 100:.0f}% deviation — likely pre-split or hallucinated price). "
-        "entry_reference_price auto-corrected to real close."
-    )
-    existing = decision.get("warning_message") or ""
-    decision["warning_message"] = (warning + " " + existing).strip()
-
-    # Also prepend a visible banner to the market report so it's obvious in the UI
-    banner = (
-        f"\n\n> ⚠️ **PRICE WARNING**: Technical report may contain hallucinated prices. "
-        f"Model stated ~${model_price:.0f}; real yfinance close is ${real:.2f}. "
-        f"Treat any price figures in this report with caution.\n\n"
-    )
-    if result.get("market_report") and isinstance(result["market_report"], str):
-        result["market_report"] = banner + result["market_report"]
+        # ── size_fraction: warn if wildly inconsistent with narrative text ──
+        sf = decision.get("size_fraction")
+        if sf is not None and sf > 0:
+            # Collect percentage mentions from all narrative fields
+            narrative = " ".join(
+                str(result.get(f, "") or "")
+                for f in ("trader_investment_plan", "final_trade_decision",
+                          "investment_debate", "risk_debate")
+            )
+            pct_mentions = [
+                float(m) / 100
+                for m in _re.findall(r'\b(\d{1,2})\s*%\s*(?:of\s+(?:the\s+)?portfolio|allocation)',
+                                     narrative, _re.IGNORECASE)
+                if 1 <= float(m) <= 50  # plausible position-size percentages
+            ]
+            if pct_mentions:
+                avg_narrative = sum(pct_mentions) / len(pct_mentions)
+                if sf > avg_narrative * 2.5:
+                    w = (
+                        f"[SIZE SANITY] structured size_fraction={sf:.0%} is {sf/avg_narrative:.1f}× "
+                        f"the debate's average proposed allocation ({avg_narrative:.0%}). "
+                        "size_fraction may not reflect the debate consensus."
+                    )
+                    decision["warning_message"] = (
+                        (decision.get("warning_message") or "") + " " + w
+                    ).strip()
 
     return result
 

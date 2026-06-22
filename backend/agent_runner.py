@@ -89,29 +89,27 @@ def _apply_dedup_patch() -> None:
                 # Post-process fundamentals output: format decimals as % so the
                 # model doesn't misinterpret raw ratios (e.g. 1.14 → 114.29%)
                 # Round raw EPS floats (4+ decimal places) to 2dp in earnings data
+                # Use module-level _re throughout — avoid `import re` inside closure
+                # (Python hoists the local binding and causes UnboundLocalError before it runs)
                 if tool.name in ("get_earnings_calendar", "get_fundamentals") and isinstance(result, str):
-                    def _eps_round(m: "re.Match[str]") -> str:
+                    def _eps_round(m: "Any") -> str:
                         return f"{m.group(1)}{float(m.group(2)):.2f}"
-                    result = re.sub(
+                    result = _re.sub(
                         r"(EPS[^:\n]*?:\s*)(-?\d+\.\d{4,})",
-                        _eps_round, result, flags=re.IGNORECASE,
+                        _eps_round, result, flags=_re.IGNORECASE,
                     )
 
                 if tool.name == "get_fundamentals" and isinstance(result, str):
-                    import re
-                    def _pct(m: "re.Match[str]") -> str:
+                    def _pct(m: "Any") -> str:
                         return f"{m.group(1)}: {float(m.group(2)) * 100:.2f}%"
                     for field in ("Return on Equity", "Return on Assets",
                                   "Profit Margins", "Operating Margins",
                                   "Gross Margins", "Ebitda Margins"):
-                        result = re.sub(
-                            rf"({re.escape(field)}): (-?\d+\.\d+(?:[eE][+-]?\d+)?)",
+                        result = _re.sub(
+                            rf"({_re.escape(field)}): (-?\d+\.\d+(?:[eE][+-]?\d+)?)",
                             _pct, result,
                         )
-                    # yfinance debtToEquity is a snapshot percentage at 100× scale.
-                    # It may differ from Total Debt ÷ Common Equity on the balance sheet
-                    # due to different time periods or debt definitions.
-                    def _de_label(m: "re.Match[str]") -> str:
+                    def _de_label(m: "Any") -> str:
                         v = float(m.group(2))
                         ratio = v / 100
                         return (
@@ -119,7 +117,7 @@ def _apply_dedup_patch() -> None:
                             f"(≈ {ratio:.4f} as a ratio; may differ from balance-sheet-derived "
                             f"Total Debt ÷ Common Equity due to timing/definition differences)"
                         )
-                    result = re.sub(
+                    result = _re.sub(
                         r"(Debt to Equity): (-?\d+\.\d+(?:[eE][+-]?\d+)?)",
                         _de_label, result,
                     )

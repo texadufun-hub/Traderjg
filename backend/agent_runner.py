@@ -544,6 +544,91 @@ def extract_result(final_state: Any, signal: Any) -> dict:
 
 # ── Price sanity check ────────────────────────────────────────────────────
 
+# ── Entity sanity check ───────────────────────────────────────────────────
+
+# Regex: multi-word capitalized strings followed by corporate suffixes
+_ENTITY_RE = _re.compile(
+    r'\b([A-Z][A-Za-z&]+(?:\s+[A-Z][A-Za-z&]+){0,4}'
+    r'\s+(?:Inc\.?|LLC|Ltd\.?|LP|Capital|Partners|Management|Fund|Group|'
+    r'Associates|Corp\.?|Corporation|Advisors?|Investments?|Securities|Holdings?))\b'
+)
+
+
+def _extract_entities_from_text(text: str) -> set[str]:
+    return {m.group(1).strip() for m in _ENTITY_RE.finditer(text)}
+
+
+def _extract_entities_from_tool_output(raw: str) -> set[str]:
+    """Extract entity names from raw CSV/text tool output (holder/transaction data)."""
+    entities: set[str] = set()
+    entities.update(_extract_entities_from_text(raw))
+    # Also grab any Holder column values from CSV rows
+    for line in raw.splitlines():
+        parts = line.split(",")
+        if len(parts) >= 2:
+            candidate = parts[1].strip().strip('"')
+            if len(candidate) > 3 and candidate[0].isupper():
+                entities.add(candidate)
+    return {e for e in entities if len(e) > 4}
+
+
+def _sanity_check_entities(result: dict) -> dict:
+    """Flag institutional entity names in news_report not present in raw tool data."""
+    news = result.get("news_report")
+    if not isinstance(news, str) or not news:
+        return result
+
+    raw_holders = _TOOL_LAST.get("get_institutional_holders", "")
+    raw_insiders = _TOOL_LAST.get("get_insider_transactions", "")
+    if not raw_holders and not raw_insiders:
+        return result
+
+    real_entities = _extract_entities_from_tool_output(raw_holders)
+    real_entities.update(_extract_entities_from_tool_output(raw_insiders))
+
+    # Scan full news report for entity names (sentence splitter would break on "Inc.")
+    report_entities = _extract_entities_from_text(news)
+
+    # Known-safe: entities from news articles (not from institutional-data tools)
+    _KNOWN_SOURCES = {
+        "Morningstar", "Appaloosa Management", "MarketBeat", "Motley Fool",
+        "Seeking Alpha", "Wall Street", "Federal Reserve", "Goldman Sachs",
+        "Morgan Stanley", "Bank of America", "Wells Fargo", "Citigroup",
+    }
+    report_entities = {
+        e for e in report_entities
+        if not any(known.lower() in e.lower() for known in _KNOWN_SOURCES)
+    }
+
+    fabricated = {
+        e for e in report_entities
+        if not any(e.lower() in real.lower() or real.lower() in e.lower()
+                   for real in real_entities)
+        # Only flag if it sounds like an institutional entity (has corporate suffix)
+        and _re.search(
+            r'\b(?:Inc\.?|LLC|Ltd\.?|LP|Capital|Partners|Management|Fund|Group|'
+            r'Associates|Corp\.?|Corporation|Advisors?|Investments?|Securities|Holdings?)\b',
+            e, _re.IGNORECASE
+        )
+    }
+
+    if fabricated:
+        banner = (
+            "\n\n> ⚠️ **ENTITY SANITY CHECK FAILED**: The following institutional entity "
+            f"name(s) appear in this report but were NOT found in the raw tool output "
+            f"(get_institutional_holders / get_insider_transactions): "
+            f"**{', '.join(sorted(fabricated))}**. "
+            "These names may be fabricated. Cross-check before acting on this section.\n\n"
+        )
+        result["news_report"] = banner + news
+        import logging as _logging
+        _logging.getLogger(__name__).warning(
+            "ENTITY_SANITY_FAIL run detected fabricated institutional names: %s", fabricated
+        )
+
+    return result
+
+
 _PRICE_DEVIATION_THRESHOLD = 0.50  # flag / auto-correct if >50% off real price
 
 def _fetch_real_price(ticker: str, trade_date: str) -> float | None:
@@ -759,6 +844,7 @@ def run_analysis_worker(
         final_state, signal = ta.propagate(ticker, trade_date, on_state=_on_state)
         result = extract_result(final_state, signal)
         result = _sanity_check_price(result, ticker, trade_date)
+        result = _sanity_check_entities(result)
 
         # Persist to DB
         db = session_factory()

@@ -258,10 +258,17 @@ class LoggingCallbackHandler(_BaseCallback):  # type: ignore[misc]
                     if isinstance(content, list):
                         content = " ".join(c.get("text", "") if isinstance(c, dict) else str(c) for c in content)
                     prompt_text += f"[{role}]: {content}\n\n"
+        # Extract model name — Gemini stores it nested under kwargs["invocation_params"]
+        model_name = (
+            serialized.get("name")
+            or (kwargs.get("invocation_params") or {}).get("model")
+            or (kwargs.get("invocation_params") or {}).get("model_name")
+            or ""
+        )
         self._log({
             "type": "llm_prompt",
-            "model": serialized.get("name", ""),
-            "prompt": prompt_text[:8000],  # cap at 8k chars
+            "model": model_name,
+            "prompt": prompt_text[:8000],
         })
 
     def on_llm_end(self, response: Any, **kwargs: Any) -> None:
@@ -274,19 +281,31 @@ class LoggingCallbackHandler(_BaseCallback):  # type: ignore[misc]
                 text = getattr(gen, "text", "") or str(getattr(gen, "message", ""))
             raw = response.llm_output or {}
             usage = raw.get("token_usage") or raw.get("usage") or {}
-            # Ollama puts usage at top level sometimes
+            # Try per-generation response_metadata (Ollama and Gemini both use it)
             if not usage and hasattr(response, "generations"):
                 for g_list in response.generations:
                     for g in g_list:
                         msg = getattr(g, "message", None)
                         if msg:
-                            resp_meta = getattr(msg, "response_metadata", {})
-                            if resp_meta:
+                            resp_meta = getattr(msg, "response_metadata", {}) or {}
+                            # Ollama format
+                            if resp_meta.get("prompt_eval_count"):
                                 usage = {
                                     "prompt": resp_meta.get("prompt_eval_count", 0),
                                     "completion": resp_meta.get("eval_count", 0),
                                     "total": resp_meta.get("prompt_eval_count", 0) + resp_meta.get("eval_count", 0),
                                 }
+                            # Gemini format: usage_metadata nested dict
+                            um = resp_meta.get("usage_metadata") or {}
+                            if um:
+                                usage = {
+                                    "prompt": um.get("prompt_token_count", 0),
+                                    "completion": um.get("candidates_token_count", 0),
+                                    "total": um.get("total_token_count", 0),
+                                }
+                            # Also capture model name from Gemini metadata
+                            if not self._log.__self__._current_agent:
+                                pass  # model name captured below via serialized
         except Exception:
             pass
 

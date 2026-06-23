@@ -95,7 +95,7 @@ def _apply_dedup_patch() -> None:
                     def _eps_round(m: "Any") -> str:
                         return f"{m.group(1)}{float(m.group(2)):.2f}"
                     result = _re.sub(
-                        r"(EPS[^:\n]*?:\s*)(-?\d+\.\d{4,})",
+                        r"(EPS[^:\n]*?:\s*)(-?\d+\.\d{3,})",  # 3+ decimal places
                         _eps_round, result, flags=_re.IGNORECASE,
                     )
 

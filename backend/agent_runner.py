@@ -582,22 +582,43 @@ def extract_result(final_state: Any, signal: Any) -> dict:
         decision = signal_detail
 
     # If signal_detail has TradingAgents defaults (parser missed the JSON block),
-    # try to re-parse the JSON from final_trade_decision text ourselves.
+    # try harder to find and parse the JSON from final_trade_decision text.
+    # The model sometimes omits the ```json label or writes JSON unfenced.
     if (signal_detail
             and "No parseable JSON block" in str(signal_detail.get("warning_message", ""))
             and isinstance(decision, str)):
+        import json as _json
+        parsed: dict | None = None
         try:
+            # Strategy 1: fenced with ```json (original TradingAgents approach)
             from tradingagents.graph.signal_processing import _parse_json_block
             parsed = _parse_json_block(decision)
-            if parsed:
-                allowed = set(signal_detail.keys())
-                parsed["signal"] = signal_str  # canonical signal always wins
-                for k, v in parsed.items():
-                    if k in allowed:
-                        signal_detail[k] = v
-                signal_detail["warning_message"] = None  # clear stale default warning
         except Exception:
             pass
+        if not parsed:
+            try:
+                # Strategy 2: fenced with ``` but no json label
+                m = _re.search(r'```\s*\n(\{.*?\})\s*\n\s*```', decision, _re.DOTALL)
+                if m:
+                    parsed = _json.loads(m.group(1))
+            except Exception:
+                pass
+        if not parsed:
+            try:
+                # Strategy 3: last bare { ... } block containing "signal"
+                start = decision.rfind('{')
+                end = decision.rfind('}')
+                if start >= 0 and end > start and '"signal"' in decision[start:end + 1]:
+                    parsed = _json.loads(decision[start:end + 1])
+            except Exception:
+                pass
+        if parsed:
+            allowed = set(signal_detail.keys())
+            parsed["signal"] = signal_str  # canonical signal always wins
+            for k, v in parsed.items():
+                if k in allowed:
+                    signal_detail[k] = v
+            signal_detail["warning_message"] = None  # clear stale default warning
 
     # Fundamentals: if empty string, try to surface a data-unavailable note
     fundamentals = to_json(_get(final_state, "fundamentals_report")) or None

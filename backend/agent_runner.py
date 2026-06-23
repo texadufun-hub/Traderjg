@@ -677,7 +677,13 @@ _ENTITY_RE = _re.compile(
 
 
 def _extract_entities_from_text(text: str) -> set[str]:
-    return {m.group(1).strip() for m in _ENTITY_RE.finditer(text)}
+    # Skip markdown header lines — they often contain descriptive phrases
+    # (e.g. "## Strategic Investments") that look like entity names but aren't
+    prose = "\n".join(
+        line for line in text.splitlines()
+        if not line.lstrip().startswith("#")
+    )
+    return {m.group(1).strip() for m in _ENTITY_RE.finditer(prose)}
 
 
 def _extract_entities_from_tool_output(raw: str) -> set[str]:

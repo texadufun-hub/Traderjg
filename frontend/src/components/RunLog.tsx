@@ -81,9 +81,31 @@ export default function RunLog({ runId }: { runId: string }) {
       .finally(() => setLoading(false));
   }, [runId]);
 
+  // Gemini pricing per 1M tokens (input / output) — update if rates change
+  const GEMINI_PRICING: Record<string, { input: number; output: number }> = {
+    "gemini-3.1-flash-lite": { input: 0.10, output: 0.40 },
+    "gemini-2.5-flash":      { input: 0.15, output: 0.60 },
+    "gemini-2.5-pro":        { input: 1.25, output: 10.00 },
+    "gemini-3-flash-preview":{ input: 0.50, output: 3.00 },
+  };
+
+  function geminiCost(model: string, prompt: number, completion: number): number | null {
+    const key = Object.keys(GEMINI_PRICING).find(k => model.includes(k));
+    if (!key) return null;
+    const p = GEMINI_PRICING[key];
+    return (prompt / 1e6) * p.input + (completion / 1e6) * p.output;
+  }
+
   const summary = entries.find((e) => e.type === "summary");
   const agentTokens = (summary as any)?.agent_tokens as Record<string, { prompt: number; completion: number; total: number; model: string; calls: number }> | undefined;
   const [showTokenTable, setShowTokenTable] = useState(false);
+
+  const totalGeminiCost = agentTokens
+    ? Object.values(agentTokens).reduce((sum, t) => {
+        const c = geminiCost(t.model || "", t.prompt, t.completion);
+        return sum + (c ?? 0);
+      }, 0)
+    : 0;
   const types = ["all", "llm_prompt", "llm_response", "tool_call", "tool_result", "agent_start", "llm_error"];
   const visible = filter === "all" ? entries : entries.filter((e) => e.type === filter);
 
@@ -96,6 +118,11 @@ export default function RunLog({ runId }: { runId: string }) {
             Total — prompt: <strong style={{ color: "#e2e8f0" }}>{summary.total_tokens.prompt.toLocaleString()}</strong>{" "}
             completion: <strong style={{ color: "#e2e8f0" }}>{summary.total_tokens.completion.toLocaleString()}</strong>{" "}
             total: <strong style={{ color: "#a855f7" }}>{summary.total_tokens.total.toLocaleString()}</strong>
+            {totalGeminiCost > 0 && (
+              <span style={{ marginLeft: 10 }}>
+                · Gemini est. <strong style={{ color: "#34d399" }}>${totalGeminiCost.toFixed(4)}</strong>
+              </span>
+            )}
           </span>
         )}
         {agentTokens && (
@@ -122,13 +149,15 @@ export default function RunLog({ runId }: { runId: string }) {
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
             <thead>
               <tr style={{ background: "#0f172a" }}>
-                {["Agent", "Model", "Calls", "Prompt", "Completion", "Total"].map(h => (
+                {["Agent", "Model", "Calls", "Prompt", "Completion", "Total", "Est. Cost"].map(h => (
                   <th key={h} style={{ padding: "6px 12px", textAlign: h === "Agent" || h === "Model" ? "left" : "right", color: "#64748b", fontWeight: 600, whiteSpace: "nowrap" }}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {Object.entries(agentTokens).sort((a, b) => b[1].total - a[1].total).map(([agent, t]) => (
+              {Object.entries(agentTokens).sort((a, b) => b[1].total - a[1].total).map(([agent, t]) => {
+                const cost = geminiCost(t.model || "", t.prompt, t.completion);
+                return (
                 <tr key={agent} style={{ borderTop: "1px solid #1e293b" }}>
                   <td style={{ padding: "5px 12px", color: "#cbd5e1" }}>{agent}</td>
                   <td style={{ padding: "5px 12px", color: "#64748b", fontFamily: "monospace", fontSize: 10 }}>{t.model || "—"}</td>
@@ -136,8 +165,12 @@ export default function RunLog({ runId }: { runId: string }) {
                   <td style={{ padding: "5px 12px", color: "#94a3b8", textAlign: "right" }}>{t.prompt.toLocaleString()}</td>
                   <td style={{ padding: "5px 12px", color: "#94a3b8", textAlign: "right" }}>{t.completion.toLocaleString()}</td>
                   <td style={{ padding: "5px 12px", color: "#a855f7", textAlign: "right", fontWeight: 700 }}>{t.total.toLocaleString()}</td>
+                  <td style={{ padding: "5px 12px", textAlign: "right", color: cost !== null ? "#34d399" : "#374151", fontFamily: "monospace", fontSize: 10 }}>
+                    {cost !== null ? `$${cost.toFixed(4)}` : "—"}
+                  </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>

@@ -1097,6 +1097,27 @@ def run_analysis_worker(
             except Exception:
                 _saved_creators = {}  # patch failed — run without override
 
+        # ── Risk Debate nodes → qwen3:8b ──────────────────────────────────
+        _RISK_DEBATE_ATTRS = (
+            "create_aggressive_debator",
+            "create_neutral_debator",
+            "create_conservative_debator",
+        )
+        try:
+            import tradingagents.graph.setup as _gs
+            from langchain_ollama import ChatOllama as _ChatOllama
+            _qwen3_llm = _ChatOllama(
+                model="qwen3:8b",
+                repeat_penalty=1.1,
+                num_ctx=8192,
+                callbacks=[callback, logger],
+            )
+            for attr in _RISK_DEBATE_ATTRS:
+                orig = getattr(_gs, attr)
+                _saved_creators[attr] = orig
+                setattr(_gs, attr, lambda _, _orig=orig: _orig(_qwen3_llm))
+        except Exception:
+            pass  # fall back to quick_thinking_llm
 
         ta = TradingAgentsGraph(
             selected_analysts=tuple(analysts),

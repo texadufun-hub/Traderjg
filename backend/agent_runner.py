@@ -558,6 +558,24 @@ def extract_result(final_state: Any, signal: Any) -> dict:
     if not decision and signal_detail:
         decision = signal_detail
 
+    # If signal_detail has TradingAgents defaults (parser missed the JSON block),
+    # try to re-parse the JSON from final_trade_decision text ourselves.
+    if (signal_detail
+            and "No parseable JSON block" in str(signal_detail.get("warning_message", ""))
+            and isinstance(decision, str)):
+        try:
+            from tradingagents.graph.signal_processing import _parse_json_block
+            parsed = _parse_json_block(decision)
+            if parsed:
+                allowed = set(signal_detail.keys())
+                parsed["signal"] = signal_str  # canonical signal always wins
+                for k, v in parsed.items():
+                    if k in allowed:
+                        signal_detail[k] = v
+                signal_detail["warning_message"] = None  # clear stale default warning
+        except Exception:
+            pass
+
     # Fundamentals: if empty string, try to surface a data-unavailable note
     fundamentals = to_json(_get(final_state, "fundamentals_report")) or None
 
@@ -931,6 +949,14 @@ def _sanity_check_price(result: dict, ticker: str, trade_date: str) -> dict:
                             f"real close is ${real:.2f}. Treat price figures with caution.\n\n"
                         )
                         result["market_report"] = banner + result["market_report"]
+
+        # ── currency: US-listed stocks trade in USD ──────────────────────────
+        if real and real > 0:
+            model_currency = decision.get("currency")
+            if model_currency and model_currency.upper() != "USD":
+                # If yfinance returns a real price it's in the trading currency.
+                # For NYSE/NASDAQ tickers yfinance always prices in USD.
+                decision["currency"] = "USD"
 
         # ── size_fraction: warn if wildly inconsistent with narrative text ──
         sf = decision.get("size_fraction")

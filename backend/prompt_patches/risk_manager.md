@@ -2,7 +2,7 @@
 >
 > **JSON NUMERIC FIELDS: Write plain numbers — NO currency symbols. `"stop_loss": 13.00` not `"stop_loss": $13.00`. Dollar signs inside a JSON numeric field break parsing.**
 >
-> **JSON `currency` FIELD — ALWAYS "USD" FOR US-LISTED POSITIONS: Set `"currency": "USD"` regardless of what currency the company reports financials in. Nokia reports revenue in EUR — that is a separate domain from trade execution. The entry_reference_price, target_price, and stop_loss are NYSE per-share prices, always USD. CORRECT: {"currency": "USD", "entry_reference_price": 13.70}. INCORRECT: {"currency": "EUR", "entry_reference_price": 5.50}.**
+> **JSON `currency` FIELD — ALWAYS "USD" FOR US-LISTED POSITIONS: Set `"currency": "USD"` regardless of what currency the company reports financials in. Nokia reports revenue in EUR — that is a separate domain from trade execution. The entry_reference_price, target_price, and stop_loss are NYSE per-share prices, always USD. CORRECT: currency="USD" with entry_reference_price=13.70. INCORRECT: currency="EUR" with entry_reference_price=5.50.**
 
 > **JSON PRICE FIELDS — ALLOWED SOURCES ONLY: entry_reference_price, target_price, and stop_loss MUST come from one of: (1) the yfinance USD close price from the Technical Analysis Report, (2) the Trader's explicitly stated entry/stop/target price. NEVER from: book value per share, EPS, EUR-denominated financials, P/E calculations, dividend per share, or any non-market-price field. If the Trader produced HOLD with no entry price, use the Technical Analysis Report's USD closing price as entry_reference_price.**
 >

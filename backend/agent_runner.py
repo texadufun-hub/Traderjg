@@ -632,15 +632,30 @@ def _extract_entities_from_tool_output(raw: str) -> set[str]:
     return {e for e in entities if len(e) > 4}
 
 
+_DERIVED_PCT_RE = _re.compile(
+    r'\b(?:of articles|of headlines|of the articles|approximately|estimated|roughly|'
+    r'about |around |polarity|breakdown|ratio|proportion|tally|self.comput|'
+    r'analyst.count|positive(?:\s+\w+){0,3}\s+articles?|negative(?:\s+\w+){0,3}\s+articles?)',
+    _re.IGNORECASE,
+)
+
+
 def _sanity_check_percentages(result: dict) -> dict:
-    """Redact percentage figures in news/sentiment reports not found in raw news tool data."""
-    raw_news = _TOOL_LAST.get("get_news", "") + " " + _TOOL_LAST.get("get_global_news", "")
-    if not raw_news.strip():
+    """Remove sentences with percentage figures not found in ANY raw tool output."""
+    # Widen source to all tool outputs available to news/sentiment nodes
+    raw_sources = " ".join(filter(None, [
+        _TOOL_LAST.get(k, "") for k in (
+            "get_news", "get_global_news", "get_market_context",
+            "get_earnings_calendar", "get_fundamentals", "get_analyst_ratings",
+            "get_insider_transactions", "get_institutional_holders",
+        )
+    ]))
+    if not raw_sources.strip():
         return result
 
-    # Extract all percentage values mentioned in raw news tool output
+    # Extract all percentage values from ALL tool outputs
     real_pcts = set()
-    for m in _re.finditer(r'(\d+\.?\d*)\s*%', raw_news):
+    for m in _re.finditer(r'(\d+\.?\d*)\s*%', raw_sources):
         real_pcts.add(m.group(1))
 
     for field in ("news_report", "sentiment_report"):
@@ -648,29 +663,56 @@ def _sanity_check_percentages(result: dict) -> dict:
         if not isinstance(text, str):
             continue
 
-        # Find percentage figures in generated text not present in raw news data
-        fabricated_sentences: list[str] = []
-        sentences = _re.split(r'(?<=[.!?])\s+', text)
-        clean_sentences: list[str] = []
-        for sentence in sentences:
-            pcts_in_sentence = _re.findall(r'(\d+\.?\d*)\s*%', sentence)
-            # Check each percentage — if any is not in raw news data, flag the sentence
-            unverified = [p for p in pcts_in_sentence if p not in real_pcts]
-            if unverified and pcts_in_sentence:
-                fabricated_sentences.append(sentence)
-                clean_sentences.append(
-                    f"[SENTENCE REMOVED — percentage(s) {', '.join(unverified+'%' for unverified in unverified)} "
-                    f"not found in raw news tool output]"
-                )
-            else:
-                clean_sentences.append(sentence)
+        lines = text.splitlines()
+        clean_lines: list[str] = []
+        removed_count = 0
 
-        if fabricated_sentences:
-            result[field] = " ".join(clean_sentences)
+        for line in lines:
+            pcts_in_line = _re.findall(r'(\d+\.?\d*)\s*%', line)
+            unverified = [p for p in pcts_in_line if p not in real_pcts]
+
+            # Exempt self-computed/analyst-derived percentages
+            if unverified and _DERIVED_PCT_RE.search(line):
+                unverified = []
+
+            if unverified and pcts_in_line:
+                # Drop the line silently — no placeholder, to avoid orphaned headers
+                removed_count += 1
+            else:
+                clean_lines.append(line)
+
+        if removed_count:
+            # Clean up orphaned section headers: a header is orphaned if
+            # no non-empty, non-header line follows it before the next header.
+            all_lines = "\n".join(clean_lines).splitlines()
+            final_lines: list[str] = []
+            i = 0
+            while i < len(all_lines):
+                line = all_lines[i]
+                if _re.match(r'#{1,6}\s', line):
+                    # Look ahead for content
+                    j = i + 1
+                    has_content = False
+                    while j < len(all_lines):
+                        ahead = all_lines[j].strip()
+                        if _re.match(r'#{1,6}\s', all_lines[j]):
+                            break  # hit next header without content
+                        if ahead:
+                            has_content = True
+                            break
+                        j += 1
+                    if has_content:
+                        final_lines.append(line)
+                    # else: drop the orphaned header
+                else:
+                    final_lines.append(line)
+                i += 1
+            cleaned = "\n".join(final_lines)
+            result[field] = cleaned.strip()
             import logging as _logging
             _logging.getLogger(__name__).warning(
-                "PERCENTAGE_SANITY: removed %d sentence(s) with unverified percentages from %s",
-                len(fabricated_sentences), field,
+                "PERCENTAGE_SANITY: removed %d line(s) with unverified percentages from %s",
+                removed_count, field,
             )
 
     return result

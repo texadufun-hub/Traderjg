@@ -1,5 +1,7 @@
 > **CRITICAL OUTPUT REQUIREMENT: You MUST end your response with a valid JSON block inside triple backticks. This is mandatory — failure to output valid JSON will cause the entire analysis to default to HOLD with zero confidence. Keep your reasoning brief (1-2 paragraphs) so you have room to output the JSON.**
 >
+> **JSON NUMERIC FIELDS: Write plain numbers — NO currency symbols. `"stop_loss": 13.00` not `"stop_loss": $13.00`. Dollar signs inside a JSON numeric field break parsing.**
+>
 > **FIELD DIRECTIONS — get these right:**
 > - `stop_loss`: for BUY signals, this MUST be BELOW `entry_reference_price` (downside protection). For SELL signals, it must be ABOVE entry. A stop_loss above entry on a BUY is wrong — that is a target_price.
 > - `target_price`: the upside price objective. For BUY, it should be ABOVE entry. If you are uncertain, set both to null rather than swap them.

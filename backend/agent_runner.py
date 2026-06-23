@@ -99,6 +99,15 @@ def _apply_dedup_patch() -> None:
                         _eps_round, result, flags=_re.IGNORECASE,
                     )
 
+                # Short interest: yfinance returns shortPercentOfFloat as a decimal (0.0119 = 1.19%)
+                if tool.name == "get_short_interest" and isinstance(result, str):
+                    def _short_pct(m: "Any") -> str:
+                        return f"{m.group(1)}: {float(m.group(2)) * 100:.2f}%"
+                    result = _re.sub(
+                        r"(Short Percent of Float): ([\d.]+)",
+                        _short_pct, result,
+                    )
+
                 if tool.name == "get_fundamentals" and isinstance(result, str):
                     def _pct(m: "Any") -> str:
                         return f"{m.group(1)}: {float(m.group(2)) * 100:.2f}%"
@@ -677,14 +686,26 @@ _ENTITY_RE = _re.compile(
 )
 
 
+# Common English adjectives/participles that should NOT be the first word of a company name.
+# Prevents "Driven Network Management", "Integrated Solutions Group" etc. from matching.
+_ENTITY_NON_STARTERS = {
+    "driven", "based", "integrated", "advanced", "enhanced", "focused",
+    "led", "powered", "enabled", "supported", "related", "aligned",
+    "dedicated", "unified", "connected", "automated", "optimized",
+}
+
+
 def _extract_entities_from_text(text: str) -> set[str]:
-    # Skip markdown header lines — they often contain descriptive phrases
-    # (e.g. "## Strategic Investments") that look like entity names but aren't
+    # Skip markdown header lines — they contain descriptive phrases
     prose = "\n".join(
         line for line in text.splitlines()
         if not line.lstrip().startswith("#")
     )
-    return {m.group(1).strip() for m in _ENTITY_RE.finditer(prose)}
+    return {
+        m.group(1).strip()
+        for m in _ENTITY_RE.finditer(prose)
+        if m.group(1).split()[0].lower() not in _ENTITY_NON_STARTERS
+    }
 
 
 def _extract_entities_from_tool_output(raw: str) -> set[str]:

@@ -95,7 +95,7 @@ def _apply_dedup_patch() -> None:
                     def _eps_round(m: "Any") -> str:
                         return f"{m.group(1)}{float(m.group(2)):.2f}"
                     result = _re.sub(
-                        r"(EPS[^:\n]*?:\s*)(-?\d+\.\d{3,})",  # 3+ decimal places
+                        r"((?:EPS|Earnings)[^:\n]*?:\s*)(-?\d+\.\d{3,})",
                         _eps_round, result, flags=_re.IGNORECASE,
                     )
 
@@ -608,7 +608,9 @@ def extract_result(final_state: Any, signal: Any) -> dict:
 _ENTITY_RE = _re.compile(
     r'\b([A-Z][A-Za-z&]+(?:\s+[A-Z][A-Za-z&]+){0,4}'
     r'\s+(?:Inc\.?|LLC|Ltd\.?|LP|Capital|Partners|Management|Fund|Group|'
-    r'Associates|Corp\.?|Corporation|Advisors?|Investments?|Securities|Holdings?))\b'
+    r'Associates|Corp\.?|Corporation|Advisors?|Investments\b|Securities|Holdings?))\b'
+    # Note: "Investments" (plural only) — "Investment" (singular) is a generic noun,
+    # not a company-name suffix. "Infrastructure Investment" must not be flagged.
 )
 
 
@@ -628,6 +630,50 @@ def _extract_entities_from_tool_output(raw: str) -> set[str]:
             if len(candidate) > 3 and candidate[0].isupper():
                 entities.add(candidate)
     return {e for e in entities if len(e) > 4}
+
+
+def _sanity_check_percentages(result: dict) -> dict:
+    """Redact percentage figures in news/sentiment reports not found in raw news tool data."""
+    raw_news = _TOOL_LAST.get("get_news", "") + " " + _TOOL_LAST.get("get_global_news", "")
+    if not raw_news.strip():
+        return result
+
+    # Extract all percentage values mentioned in raw news tool output
+    real_pcts = set()
+    for m in _re.finditer(r'(\d+\.?\d*)\s*%', raw_news):
+        real_pcts.add(m.group(1))
+
+    for field in ("news_report", "sentiment_report"):
+        text = result.get(field)
+        if not isinstance(text, str):
+            continue
+
+        # Find percentage figures in generated text not present in raw news data
+        fabricated_sentences: list[str] = []
+        sentences = _re.split(r'(?<=[.!?])\s+', text)
+        clean_sentences: list[str] = []
+        for sentence in sentences:
+            pcts_in_sentence = _re.findall(r'(\d+\.?\d*)\s*%', sentence)
+            # Check each percentage — if any is not in raw news data, flag the sentence
+            unverified = [p for p in pcts_in_sentence if p not in real_pcts]
+            if unverified and pcts_in_sentence:
+                fabricated_sentences.append(sentence)
+                clean_sentences.append(
+                    f"[SENTENCE REMOVED — percentage(s) {', '.join(unverified+'%' for unverified in unverified)} "
+                    f"not found in raw news tool output]"
+                )
+            else:
+                clean_sentences.append(sentence)
+
+        if fabricated_sentences:
+            result[field] = " ".join(clean_sentences)
+            import logging as _logging
+            _logging.getLogger(__name__).warning(
+                "PERCENTAGE_SANITY: removed %d sentence(s) with unverified percentages from %s",
+                len(fabricated_sentences), field,
+            )
+
+    return result
 
 
 def _sanity_check_entities(result: dict, ticker: str = "") -> dict:
@@ -1008,6 +1054,7 @@ def run_analysis_worker(
         result = _sanity_check_price(result, ticker, trade_date)
         result = _sanity_check_entities(result, ticker=ticker)
         result = _sanity_check_debate_prices(result, ticker, trade_date)
+        result = _sanity_check_percentages(result)
 
         # Persist to DB
         db = session_factory()

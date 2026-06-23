@@ -668,11 +668,12 @@ def extract_result(final_state: Any, signal: Any) -> dict:
 
 # Regex: multi-word capitalized strings followed by corporate suffixes
 _ENTITY_RE = _re.compile(
-    r'\b([A-Z][A-Za-z&]+(?:\s+[A-Z][A-Za-z&]+){0,4}'
+    r'\b([A-Z][A-Za-z&]+(?:\s+[A-Z][A-Za-z&]+){1,4}'
     r'\s+(?:Inc\.?|LLC|Ltd\.?|LP|Capital|Partners|Management|Fund|Group|'
     r'Associates|Corp\.?|Corporation|Advisors?|Investments\b|Securities|Holdings?))\b'
-    # Note: "Investments" (plural only) — "Investment" (singular) is a generic noun,
-    # not a company-name suffix. "Infrastructure Investment" must not be flagged.
+    # Requires at least 2 capitalised words before the suffix so single-word
+    # generic phrases like "Strategic Investments" or "Infrastructure Fund" are
+    # not treated as company names. "Financial Avengers Inc" (2 words) still matches.
 )
 
 
@@ -919,8 +920,11 @@ def _sanity_check_debate_prices(result: dict, ticker: str, trade_date: str) -> d
                 continue
             if val <= upper_bound or val >= upper_bound * 20:
                 continue
-            # Skip if followed by a magnitude qualifier (not a per-share price)
+            # Skip if immediately followed by % — it's a return/rate, not a price
             after = text[m.end():m.end() + 20]
+            if after.lstrip().startswith('%'):
+                continue
+            # Skip if followed by a magnitude qualifier (not a per-share price)
             if _MAGNITUDE_SUFFIXES.match(after):
                 continue
             # Skip if non-price context word appears within 30 chars after

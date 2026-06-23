@@ -1000,38 +1000,38 @@ def _sanity_check_price(result: dict, ticker: str, trade_date: str) -> dict:
         if not isinstance(decision, dict):
             continue
 
-        # ── entry_reference_price: populate if null, correct if wrong ────
+        # ── currency: always USD for trading prices (P1) ─────────────────────
+        if real and real > 0:
+            decision["currency"] = "USD"
+
+        # ── entry_reference_price: populate if null, correct if wrong ────────
         model_price = decision.get("entry_reference_price")
         if real and real > 0:
             if not model_price:
-                # Null entry price — populate from real close automatically
                 decision["entry_reference_price"] = real
             else:
                 deviation = abs(model_price - real) / real
                 if deviation > _PRICE_DEVIATION_THRESHOLD:
                     decision["entry_reference_price"] = real
-                    w = (
+                    # Cascade: null target and stop — they were anchored to a
+                    # fabricated entry and are no longer meaningful (P2)
+                    decision["target_price"] = None
+                    decision["stop_loss"] = None
+                    sanity_w = (
                         f"[PRICE SANITY] Model stated ${model_price:.2f}; "
                         f"yfinance close ${real:.2f} ({deviation*100:.0f}% deviation). "
-                        "entry_reference_price auto-corrected."
+                        "entry_reference_price auto-corrected; target_price and stop_loss "
+                        "nulled (were anchored to fabricated price)."
                     )
-                    decision["warning_message"] = (
-                        w + " " + (decision.get("warning_message") or "")
-                    ).strip()
+                    # P3: keep PM's warning_message separate — don't concatenate (P3)
+                    decision["warning_message"] = sanity_w
                     if key == "signal_detail" and result.get("market_report"):
                         banner = (
                             f"\n\n> ⚠️ **PRICE WARNING**: Model stated ~${model_price:.0f}; "
-                            f"real close is ${real:.2f}. Treat price figures with caution.\n\n"
+                            f"real close is ${real:.2f}. entry_reference_price corrected; "
+                            "target/stop nulled.\n\n"
                         )
                         result["market_report"] = banner + result["market_report"]
-
-        # ── currency: US-listed stocks trade in USD ──────────────────────────
-        if real and real > 0:
-            model_currency = decision.get("currency")
-            if model_currency and model_currency.upper() != "USD":
-                # If yfinance returns a real price it's in the trading currency.
-                # For NYSE/NASDAQ tickers yfinance always prices in USD.
-                decision["currency"] = "USD"
 
         # ── size_fraction: warn if wildly inconsistent with narrative text ──
         sf = decision.get("size_fraction")

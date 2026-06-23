@@ -83,6 +83,7 @@ export default function RunLog({ runId }: { runId: string }) {
 
   // Gemini pricing per 1M tokens (input / output) — update if rates change
   const GEMINI_PRICING: Record<string, { input: number; output: number }> = {
+    "gemini-3.5-flash":      { input: 0.15, output: 0.60 },
     "gemini-3.1-flash-lite": { input: 0.10, output: 0.40 },
     "gemini-2.5-flash":      { input: 0.15, output: 0.60 },
     "gemini-2.5-pro":        { input: 1.25, output: 10.00 },

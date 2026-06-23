@@ -244,6 +244,9 @@ class LoggingCallbackHandler(_BaseCallback):  # type: ignore[misc]
         self._path = LOG_DIR / f"{run_id}.jsonl"
         self._tokens = {"prompt": 0, "completion": 0, "total": 0}
         self._current_agent: str = ""
+        self._current_model: str = ""
+        # per-agent: {agent_name: {prompt, completion, total, model}}
+        self._agent_tokens: dict[str, dict] = {}
 
     def _log(self, entry: dict) -> None:
         entry.setdefault("ts", datetime.utcnow().isoformat())
@@ -283,10 +286,12 @@ class LoggingCallbackHandler(_BaseCallback):  # type: ignore[misc]
         # Extract model name — Gemini stores it nested under kwargs["invocation_params"]
         model_name = (
             serialized.get("name")
+            or (serialized.get("kwargs") or {}).get("model")
             or (kwargs.get("invocation_params") or {}).get("model")
             or (kwargs.get("invocation_params") or {}).get("model_name")
             or ""
         )
+        self._current_model = model_name
         self._log({
             "type": "llm_prompt",
             "model": model_name,
@@ -339,6 +344,20 @@ class LoggingCallbackHandler(_BaseCallback):  # type: ignore[misc]
         self._tokens["completion"] += completion_t
         self._tokens["total"] += total_t
 
+        # Per-agent token accumulation
+        agent_key = self._current_agent or "pipeline"
+        if agent_key not in self._agent_tokens:
+            self._agent_tokens[agent_key] = {
+                "prompt": 0, "completion": 0, "total": 0,
+                "model": self._current_model, "calls": 0,
+            }
+        self._agent_tokens[agent_key]["prompt"] += prompt_t
+        self._agent_tokens[agent_key]["completion"] += completion_t
+        self._agent_tokens[agent_key]["total"] += total_t
+        self._agent_tokens[agent_key]["calls"] += 1
+        if self._current_model:
+            self._agent_tokens[agent_key]["model"] = self._current_model
+
         self._log({
             "type": "llm_response",
             "response": text[:8000],
@@ -359,7 +378,11 @@ class LoggingCallbackHandler(_BaseCallback):  # type: ignore[misc]
         self._log({"type": "tool_error", "error": str(error)})
 
     def write_summary(self) -> None:
-        self._log({"type": "summary", "total_tokens": dict(self._tokens)})
+        self._log({
+            "type": "summary",
+            "total_tokens": dict(self._tokens),
+            "agent_tokens": self._agent_tokens,
+        })
 
     @property
     def log_path(self) -> Path:

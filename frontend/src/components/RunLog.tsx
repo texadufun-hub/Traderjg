@@ -82,6 +82,8 @@ export default function RunLog({ runId }: { runId: string }) {
   }, [runId]);
 
   const summary = entries.find((e) => e.type === "summary");
+  const agentTokens = (summary as any)?.agent_tokens as Record<string, { prompt: number; completion: number; total: number; model: string; calls: number }> | undefined;
+  const [showTokenTable, setShowTokenTable] = useState(false);
   const types = ["all", "llm_prompt", "llm_response", "tool_call", "tool_result", "agent_start", "llm_error"];
   const visible = filter === "all" ? entries : entries.filter((e) => e.type === filter);
 
@@ -91,10 +93,18 @@ export default function RunLog({ runId }: { runId: string }) {
         <span style={{ color: "#e2e8f0", fontWeight: 700, fontSize: 13 }}>Run Log</span>
         {summary?.total_tokens && (
           <span style={{ fontSize: 12, color: "#94a3b8" }}>
-            Total tokens — prompt: <strong style={{ color: "#e2e8f0" }}>{summary.total_tokens.prompt.toLocaleString()}</strong>{" "}
+            Total — prompt: <strong style={{ color: "#e2e8f0" }}>{summary.total_tokens.prompt.toLocaleString()}</strong>{" "}
             completion: <strong style={{ color: "#e2e8f0" }}>{summary.total_tokens.completion.toLocaleString()}</strong>{" "}
             total: <strong style={{ color: "#a855f7" }}>{summary.total_tokens.total.toLocaleString()}</strong>
           </span>
+        )}
+        {agentTokens && (
+          <button onClick={() => setShowTokenTable(t => !t)} style={{
+            padding: "2px 8px", borderRadius: 6, fontSize: 10, fontWeight: 600, cursor: "pointer",
+            border: "1px solid #334155", background: "transparent", color: "#94a3b8",
+          }}>
+            {showTokenTable ? "Hide breakdown" : "By agent ▾"}
+          </button>
         )}
         <div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
           {types.map((t) => (
@@ -107,6 +117,31 @@ export default function RunLog({ runId }: { runId: string }) {
           ))}
         </div>
       </div>
+      {showTokenTable && agentTokens && (
+        <div style={{ borderBottom: "1px solid #1e293b", overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
+            <thead>
+              <tr style={{ background: "#0f172a" }}>
+                {["Agent", "Model", "Calls", "Prompt", "Completion", "Total"].map(h => (
+                  <th key={h} style={{ padding: "6px 12px", textAlign: h === "Agent" || h === "Model" ? "left" : "right", color: "#64748b", fontWeight: 600, whiteSpace: "nowrap" }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {Object.entries(agentTokens).sort((a, b) => b[1].total - a[1].total).map(([agent, t]) => (
+                <tr key={agent} style={{ borderTop: "1px solid #1e293b" }}>
+                  <td style={{ padding: "5px 12px", color: "#cbd5e1" }}>{agent}</td>
+                  <td style={{ padding: "5px 12px", color: "#64748b", fontFamily: "monospace", fontSize: 10 }}>{t.model || "—"}</td>
+                  <td style={{ padding: "5px 12px", color: "#64748b", textAlign: "right" }}>{t.calls}</td>
+                  <td style={{ padding: "5px 12px", color: "#94a3b8", textAlign: "right" }}>{t.prompt.toLocaleString()}</td>
+                  <td style={{ padding: "5px 12px", color: "#94a3b8", textAlign: "right" }}>{t.completion.toLocaleString()}</td>
+                  <td style={{ padding: "5px 12px", color: "#a855f7", textAlign: "right", fontWeight: 700 }}>{t.total.toLocaleString()}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       <div style={{ maxHeight: 500, overflow: "auto" }}>
         {loading && <div style={{ padding: 24, textAlign: "center", color: "#475569" }}>Loading log…</div>}

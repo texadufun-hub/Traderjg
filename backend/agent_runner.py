@@ -1097,33 +1097,6 @@ def run_analysis_worker(
             except Exception:
                 _saved_creators = {}  # patch failed — run without override
 
-        # ── Risk Debate nodes → qwen3:8b ──────────────────────────────────
-        # Swap Aggressive/Conservative/Neutral from quick_thinking_llm (gemma4:e2b-it-qat)
-        # to qwen3:8b for better persona consistency and reduced verbatim duplication.
-        # - repeat_penalty=1.1: explicit baseline (Ollama default is 1.0 = no penalty)
-        # - num_ctx=8192: matches rest of pipeline
-        # - Thinking mode: qwen3:8b in tool-call flows typically suppresses <think> blocks
-        #   automatically; if they appear in validation, pass options={"think": False}.
-        _RISK_DEBATE_ATTRS = (
-            "create_aggressive_debator",
-            "create_neutral_debator",
-            "create_conservative_debator",
-        )
-        try:
-            import tradingagents.graph.setup as _gs
-            from langchain_ollama import ChatOllama as _ChatOllama
-            _qwen3_llm = _ChatOllama(
-                model="qwen3:8b",
-                repeat_penalty=1.1,
-                num_ctx=8192,
-                callbacks=[callback, logger],
-            )
-            for attr in _RISK_DEBATE_ATTRS:
-                orig = getattr(_gs, attr)
-                _saved_creators[attr] = orig
-                setattr(_gs, attr, lambda _, _orig=orig: _orig(_qwen3_llm))
-        except Exception:
-            pass  # patch failed silently — nodes fall back to quick_thinking_llm
 
         ta = TradingAgentsGraph(
             selected_analysts=tuple(analysts),

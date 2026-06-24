@@ -988,6 +988,28 @@ def _fetch_real_price(ticker: str, trade_date: str) -> float | None:
     return None
 
 
+def _rewrite_pm_json_in_text(text: str, corrected: dict) -> str:
+    """Overwrite corrected fields in the last fenced JSON block inside final_trade_decision.
+
+    This propagates signal_detail corrections to the string that the rendering
+    layer (frontend section + PDF export) actually displays.
+    """
+    import json as _json_inner
+    matches = list(_re.finditer(r'```(?:json)?\s*\n(\{.*?\})\s*\n?```', text, _re.DOTALL))
+    if not matches:
+        return text
+    m = matches[-1]
+    try:
+        parsed = _json_inner.loads(m.group(1))
+    except Exception:
+        return text
+    for k in ("currency", "entry_reference_price", "target_price", "stop_loss"):
+        if k in corrected:
+            parsed[k] = corrected[k]
+    new_json = _json_inner.dumps(parsed, indent=2)
+    return text[: m.start(1)] + new_json + text[m.end(1):]
+
+
 def _sanity_check_price(result: dict, ticker: str, trade_date: str) -> dict:
     """Populate/correct entry_reference_price and flag size_fraction inconsistencies."""
     import re as _re
@@ -1059,6 +1081,15 @@ def _sanity_check_price(result: dict, ticker: str, trade_date: str) -> dict:
                     decision["warning_message"] = (
                         (decision.get("warning_message") or "") + " " + w
                     ).strip()
+
+    # Propagate signal_detail corrections into the markdown string that the
+    # rendering layer (frontend section + PDF export) actually displays.
+    # Without this, _sanity_check_price only fixes signal_detail (the hero card)
+    # while final_trade_decision (the PM Decision section body) stays uncorrected.
+    sd = result.get("signal_detail")
+    ftd = result.get("final_trade_decision")
+    if isinstance(sd, dict) and isinstance(ftd, str):
+        result["final_trade_decision"] = _rewrite_pm_json_in_text(ftd, sd)
 
     return result
 

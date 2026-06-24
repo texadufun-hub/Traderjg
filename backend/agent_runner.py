@@ -1164,6 +1164,7 @@ def run_analysis_worker(
             from langchain_ollama import ChatOllama as _ChatOllama
             _qwen3_llm = _ChatOllama(
                 model="qwen3:8b",
+                temperature=0.5,   # experiment: was Ollama default (~0.8)
                 repeat_penalty=1.1,
                 num_ctx=8192,
                 callbacks=[callback, logger],

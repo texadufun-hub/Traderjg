@@ -1131,32 +1131,29 @@ def run_analysis_worker(
         # Restored unconditionally in the finally block below.
         #
         # Map: analyst key in selected_analysts → setup.py attribute name
-        _GEMINI_ANALYST_ATTRS: dict[str, str] = {
+        _ANALYST_ATTRS: dict[str, str] = {
             "fundamentals": "create_fundamentals_analyst",
             "social":       "create_social_media_analyst",
             "news":         "create_news_analyst",
             "market":       "create_market_analyst",
         }
-        _active_gemini = [k for k in _GEMINI_ANALYST_ATTRS if k in analysts]
-        if _active_gemini:
+        _active_analysts = [k for k in _ANALYST_ATTRS if k in analysts]
+        if _active_analysts:
             try:
                 import tradingagents.graph.setup as _gs
-                from tradingagents.llm import build_chat_model as _bcm
-                _gemini_llm = _bcm(
-                    "google_genai", "gemini-3.1-flash-lite",
-                    reasoning_effort="high",   # → thinking_level="high" for Gemini
+                from langchain_ollama import ChatOllama as _ChatOllama
+                _analyst_llm = _ChatOllama(
+                    model="qwen3:8b",
+                    temperature=0.1,   # low temperature for analyst grounding
+                    repeat_penalty=1.1,
+                    num_ctx=8192,
                     callbacks=[callback, logger],
                 )
-                # Override default temperature (0.7) to 0.1 for more deterministic output
-                try:
-                    object.__setattr__(_gemini_llm, "temperature", 0.1)
-                except Exception:
-                    pass
-                for analyst_key in _active_gemini:
-                    attr = _GEMINI_ANALYST_ATTRS[analyst_key]
+                for analyst_key in _active_analysts:
+                    attr = _ANALYST_ATTRS[analyst_key]
                     orig = getattr(_gs, attr)
                     _saved_creators[attr] = orig
-                    setattr(_gs, attr, lambda _, _orig=orig: _orig(_gemini_llm))
+                    setattr(_gs, attr, lambda _, _orig=orig: _orig(_analyst_llm))
             except Exception:
                 _saved_creators = {}  # patch failed — run without override
 

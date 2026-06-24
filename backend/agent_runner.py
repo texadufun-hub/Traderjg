@@ -1145,6 +1145,11 @@ def run_analysis_worker(
                     reasoning_effort="high",   # → thinking_level="high" for Gemini
                     callbacks=[callback, logger],
                 )
+                # Override default temperature (0.7) to 0.1 for more deterministic output
+                try:
+                    object.__setattr__(_gemini_llm, "temperature", 0.1)
+                except Exception:
+                    pass
                 for analyst_key in _active_gemini:
                     attr = _GEMINI_ANALYST_ATTRS[analyst_key]
                     orig = getattr(_gs, attr)

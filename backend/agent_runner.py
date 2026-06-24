@@ -1141,7 +1141,7 @@ def run_analysis_worker(
                 import tradingagents.graph.setup as _gs
                 from tradingagents.llm import build_chat_model as _bcm
                 _gemini_llm = _bcm(
-                    "google_genai", "gemini-3.5-flash",
+                    "google_genai", "gemini-3.1-flash-lite",
                     reasoning_effort="high",   # → thinking_level="high" for Gemini
                     callbacks=[callback, logger],
                 )

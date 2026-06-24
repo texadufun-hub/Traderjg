@@ -160,6 +160,8 @@ def _apply_num_ctx_patch() -> None:
             _orig_post_init(self, context)
             if self.num_ctx is None:
                 object.__setattr__(self, "num_ctx", 8192)
+            if self.temperature is None:
+                object.__setattr__(self, "temperature", 0.5)
 
         ChatOllama.model_post_init = _patched_post_init  # type: ignore[method-assign]
     except Exception:

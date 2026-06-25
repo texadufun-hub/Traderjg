@@ -1050,20 +1050,28 @@ def _sanity_check_debate_prices(result: dict, ticker: str, trade_date: str) -> d
             flagged_fields[field] = list(set(suspicious))
 
     if flagged_fields:
-        # Use closing-price 52-week high (consistent with what the Technical Analyst reports)
-        # yfinance fiftyTwoWeekHigh is intraday; the report body typically uses closing highs
         for field, prices in flagged_fields.items():
             banner = (
                 f"\n\n> ⚠️ **PRICE GROUNDING WARNING**: The following per-share price figure(s) "
                 f"in this section appear inconsistent with the real trading range "
                 f"(52-week closing high ~${wk52_high:.2f}, current ~${real:.2f}). "
-                f"Note: the 52-week intraday high from yfinance may differ slightly from "
-                f"the 52-week closing high cited in the Technical Analysis Report — "
-                f"both are valid but label them correctly. "
                 f"Flagged values: **{', '.join(prices)}**. "
-                f"These may be pre-split or memorized training-data prices.\n\n"
+                f"These may be pre-split or memorized training-data prices. "
+                f"Inline occurrences annotated below.\n\n"
             )
-            result[field] = banner + result[field]
+            # Also annotate each occurrence inline so it's visible even if the banner is skipped
+            text = result[field]
+            for price_str in prices:
+                val_str = price_str.lstrip('$')
+                inline_pat = _re.compile(
+                    r'(\$?\b' + _re.escape(val_str) + r'\b)',
+                )
+                annotation = (
+                    f"\\1 [⚠️ outside real range "
+                    f"${real:.2f}–${wk52_high:.2f}]"
+                )
+                text = inline_pat.sub(annotation, text)
+            result[field] = banner + text
 
     return result
 
@@ -1082,25 +1090,42 @@ def _fetch_real_price(ticker: str, trade_date: str) -> float | None:
 
 
 def _rewrite_pm_json_in_text(text: str, corrected: dict) -> str:
-    """Overwrite corrected fields in the last fenced JSON block inside final_trade_decision.
+    """Overwrite corrected fields in the PM JSON block inside final_trade_decision.
 
-    This propagates signal_detail corrections to the string that the rendering
-    layer (frontend section + PDF export) actually displays.
+    Uses multiple strategies to find the JSON block (fenced or unfenced),
+    matching the same approach used for parsing in extract_result.
     """
     import json as _json_inner
+
+    # Strategy 1: last fenced ```json block
     matches = list(_re.finditer(r'```(?:json)?\s*\n(\{.*?\})\s*\n?```', text, _re.DOTALL))
-    if not matches:
-        return text
-    m = matches[-1]
-    try:
-        parsed = _json_inner.loads(m.group(1))
-    except Exception:
-        return text
-    for k in ("currency", "entry_reference_price", "target_price", "stop_loss"):
-        if k in corrected:
-            parsed[k] = corrected[k]
-    new_json = _json_inner.dumps(parsed, indent=2)
-    return text[: m.start(1)] + new_json + text[m.end(1):]
+    if matches:
+        m = matches[-1]
+        try:
+            parsed = _json_inner.loads(m.group(1))
+            for k in ("currency", "entry_reference_price", "target_price", "stop_loss"):
+                if k in corrected:
+                    parsed[k] = corrected[k]
+            new_json = _json_inner.dumps(parsed, indent=2)
+            return text[: m.start(1)] + new_json + text[m.end(1):]
+        except Exception:
+            pass
+
+    # Strategy 2: last bare { ... } block containing "signal"
+    start = text.rfind('{')
+    end = text.rfind('}')
+    if start >= 0 and end > start and '"signal"' in text[start:end + 1]:
+        try:
+            parsed = _json_inner.loads(text[start:end + 1])
+            for k in ("currency", "entry_reference_price", "target_price", "stop_loss"):
+                if k in corrected:
+                    parsed[k] = corrected[k]
+            new_json = _json_inner.dumps(parsed, indent=2)
+            return text[:start] + new_json + text[end + 1:]
+        except Exception:
+            pass
+
+    return text  # no parseable block found — return unchanged
 
 
 def _sanity_check_price(result: dict, ticker: str, trade_date: str) -> dict:
@@ -1147,6 +1172,30 @@ def _sanity_check_price(result: dict, ticker: str, trade_date: str) -> dict:
                             "target/stop nulled.\n\n"
                         )
                         result["market_report"] = banner + result["market_report"]
+
+        # ── stop_loss / target_price wrong-side correction (authoritative pass) ──
+        # This runs AFTER extract_result's re-parsing, which can overwrite the
+        # earlier correction in extract_result if TradingAgents falls back to defaults.
+        stop = decision.get("stop_loss")
+        target = decision.get("target_price")
+        entry_now = decision.get("entry_reference_price")
+        sig = decision.get("signal", "")
+        if entry_now and stop:
+            buy_now = sig == "BUY"
+            sell_now = sig == "SELL"
+            ws = (buy_now and stop > entry_now) or (sell_now and stop < entry_now)
+            if ws:
+                decision["target_price"] = stop if target is None else target
+                decision["stop_loss"] = None
+                w = (
+                    f"[STOP/TARGET CORRECTED] {sig}: stop_loss={stop:.2f} was on the wrong side "
+                    f"of entry={entry_now:.2f}. Moved to target_price."
+                )
+                decision["warning_message"] = (
+                    (decision.get("warning_message") or "") + " " + w
+                ).strip()
+            elif stop > entry_now * 3 or stop < 0:
+                decision["stop_loss"] = None
 
         # ── size_fraction: warn if wildly inconsistent with narrative text ──
         sf = decision.get("size_fraction")

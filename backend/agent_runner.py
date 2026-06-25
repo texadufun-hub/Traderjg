@@ -1141,14 +1141,16 @@ def run_analysis_worker(
         if _active_analysts:
             try:
                 import tradingagents.graph.setup as _gs
-                from langchain_ollama import ChatOllama as _ChatOllama
-                _analyst_llm = _ChatOllama(
-                    model="qwen3:8b",
-                    temperature=0.1,   # low temperature for analyst grounding
-                    repeat_penalty=1.1,
-                    num_ctx=8192,
+                from tradingagents.llm import build_chat_model as _bcm
+                _analyst_llm = _bcm(
+                    "google_genai", "gemini-3.1-flash-lite",
+                    reasoning_effort="high",
                     callbacks=[callback, logger],
                 )
+                try:
+                    object.__setattr__(_analyst_llm, "temperature", 0.5)
+                except Exception:
+                    pass
                 for analyst_key in _active_analysts:
                     attr = _ANALYST_ATTRS[analyst_key]
                     orig = getattr(_gs, attr)

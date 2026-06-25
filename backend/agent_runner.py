@@ -895,6 +895,45 @@ _PRICE_DEVIATION_THRESHOLD = 0.50  # flag / auto-correct if >50% off real price
 
 # ── Debate price hallucination check ──────────────────────────────────────
 
+_YOY_CLAIM_RE = _re.compile(
+    r'(\d{1,3}(?:\.\d+)?)\s*%\s*(?:YoY|year-over-year|year.on.year)\s*'
+    r'(?:decline|growth|increase|drop|rise|fall|gain)',
+    _re.IGNORECASE,
+)
+_QUARTER_RE = _re.compile(r'\bQ[1-4]\s*20\d{2}\b', _re.IGNORECASE)
+_TTM_RE = _re.compile(r'\bTTM\b', _re.IGNORECASE)
+
+
+def _sanity_check_yoy(result: dict) -> dict:
+    """Flag YoY % claims that co-occur with both a quarter ref and 'TTM' within 200 chars.
+
+    Sentence-level splitting is unreliable (breaks on abbreviation periods like "vs."),
+    so we use a sliding-window approach: for each YoY% match, check whether both a
+    quarter reference and TTM appear within ±200 characters.
+    """
+    for field in ("investment_debate", "risk_debate",
+                  "trader_investment_plan", "final_trade_decision"):
+        text = result.get(field)
+        if not isinstance(text, str):
+            continue
+        flagged: list[str] = []
+        for m in _YOY_CLAIM_RE.finditer(text):
+            window_start = max(0, m.start() - 200)
+            window_end = min(len(text), m.end() + 200)
+            window = text[window_start:window_end]
+            if _QUARTER_RE.search(window) and _TTM_RE.search(window):
+                flagged.append(f"{m.group(1)}% YoY claim")
+        if flagged:
+            banner = (
+                f"\n\n> ⚠️ **YOY LOGIC WARNING**: The following appear to compare a "
+                f"single quarter against a TTM total — that cannot produce a valid "
+                f"year-over-year rate: **{', '.join(set(flagged))}**. "
+                "Check that the comparison uses the same period across two years.\n\n"
+            )
+            result[field] = banner + text
+    return result
+
+
 def _sanity_check_debate_prices(result: dict, ticker: str, trade_date: str) -> dict:
     """Scan debate text for price figures inconsistent with the real trading range."""
     real = _fetch_real_price(ticker, trade_date)
@@ -1259,6 +1298,7 @@ def run_analysis_worker(
         result = _sanity_check_entities(result, ticker=ticker)
         result = _sanity_check_debate_prices(result, ticker, trade_date)
         result = _sanity_check_percentages(result)
+        result = _sanity_check_yoy(result)
 
         # Persist to DB
         db = session_factory()

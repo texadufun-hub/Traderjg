@@ -934,6 +934,58 @@ def _sanity_check_yoy(result: dict) -> dict:
     return result
 
 
+_SMA_DIRECTIONAL_RE = _re.compile(
+    r'\b(above|below)\s+(?:its?\s+)?'
+    r'(?:(\d+)[\-\s]?day\s+(?:simple\s+moving\s+average|SMA)|'
+    r'(VWMA|volume.weighted\s+moving\s+average)|'
+    r'(Bollinger\s+\w+(?:\s+Band)?))'
+    r'[^.!?]{0,60}\(?(\d+\.?\d*)\)?',
+    _re.IGNORECASE,
+)
+_CLOSE_PRICE_RE = _re.compile(
+    r'(?:close(?:d|ing)?(?:\s+price)?|current\s+price|trading\s+at|traded\s+at)'
+    r'(?:\s+(?:of|at|to|around|near))?\s+\$?(\d+\.?\d+)',
+    _re.IGNORECASE,
+)
+
+
+def _sanity_check_sma_direction(result: dict) -> dict:
+    """Flag inverted above/below claims in the Market Analyst report."""
+    report = result.get("market_report")
+    if not isinstance(report, str):
+        return result
+
+    close_m = _CLOSE_PRICE_RE.search(report)
+    if not close_m:
+        return result
+    close = float(close_m.group(1))
+
+    inversions: list[str] = []
+    for m in _SMA_DIRECTIONAL_RE.finditer(report):
+        direction = m.group(1).lower()
+        try:
+            indicator_val = float(m.group(5))
+        except (TypeError, ValueError):
+            continue
+        correct = "above" if close > indicator_val else "below"
+        if direction != correct:
+            inversions.append(
+                f"close {close} stated as '{direction}' indicator {indicator_val} "
+                f"(correct: '{correct}')"
+            )
+
+    if inversions:
+        banner = (
+            "\n\n> ⚠️ **SMA DIRECTION WARNING**: The following above/below comparisons "
+            "appear inverted based on the stated close price "
+            f"({close}): **{'; '.join(inversions)}**. "
+            "All downstream nodes will inherit this error — verify before acting.\n\n"
+        )
+        result["market_report"] = banner + report
+
+    return result
+
+
 def _sanity_check_debate_prices(result: dict, ticker: str, trade_date: str) -> dict:
     """Scan debate text for price figures inconsistent with the real trading range."""
     real = _fetch_real_price(ticker, trade_date)
@@ -1299,6 +1351,7 @@ def run_analysis_worker(
         result = _sanity_check_debate_prices(result, ticker, trade_date)
         result = _sanity_check_percentages(result)
         result = _sanity_check_yoy(result)
+        result = _sanity_check_sma_direction(result)
 
         # Persist to DB
         db = session_factory()
